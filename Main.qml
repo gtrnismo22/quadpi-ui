@@ -29,6 +29,9 @@ ApplicationWindow {
     property bool blockMenuVisible: false
     property bool pluginBrowserVisible: false
     property bool bankPresetOverlayVisible: false
+    property bool deviceMenuVisible: false
+    property bool confirmReboot: false
+    property bool confirmShutdown: false
     property bool keyboardOpen: false
     property string pluginSearchText: ""
     property int pluginInsertionIndex: 0
@@ -38,6 +41,8 @@ ApplicationWindow {
     property string editSceneColor: "#22C55E"
     property int editorParamPage: 0
     property string fileRelativePath: ""
+    property bool settingsModalVisible: false
+    property int settingsConfirmState: 0  // 0=idle, 1=confirm reboot, 2=confirm shutdown
     readonly property int paramsPerPage: 10
     readonly property var selectedPedal: bridge ? bridge.selectedPedal : ({})
     readonly property var selectedFileProperties: selectedPedal.fileProperties || []
@@ -192,7 +197,13 @@ ApplicationWindow {
                     MouseArea { anchors.fill: parent; hoverEnabled: false; onClicked: window.gigViewVisible = true }
                 }
 
-                Text { text: "⋮"; color: "#FFFFFF"; font.pixelSize: 24; Layout.preferredWidth: 28 }
+                Text { text: "⋮"; color: "#FFFFFF"; font.pixelSize: 24; Layout.preferredWidth: 28
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: false
+                        onClicked: window.settingsModalVisible = true
+                    }
+                }
 
 
             }
@@ -281,13 +292,13 @@ ApplicationWindow {
                     scale: signalFlick.fitScale
                     transformOrigin: Item.TopLeft
 
-                    property int insertionChainId: -1
+                    property string insertionChainId: "main"
 
                     function moveBlock(instanceId, targetChainId, targetIndex) {
                         if (!bridge) return
                         bridge.dropBlock(
                             instanceId,
-                            targetChainId === undefined ? -1 : targetChainId,
+                            targetChainId === undefined ? "main" : targetChainId,
                             targetIndex === undefined ? 0 : targetIndex
                         )
                     }
@@ -436,7 +447,7 @@ ApplicationWindow {
                                     hoverEnabled: false
                                     onClicked: {
                                         window.pluginInsertionIndex = modelData.index !== undefined ? modelData.index : 0
-                                        signalCanvas.insertionChainId = modelData.chainId !== undefined ? modelData.chainId : -1
+                                        signalCanvas.insertionChainId = modelData.chainId !== undefined ? modelData.chainId : "main"
                                         window.pluginBrowserVisible = true
                                     }
                                 }
@@ -518,7 +529,7 @@ ApplicationWindow {
                                         if (bestNode) {
                                             signalCanvas.moveBlock(
                                                 modelData.instanceId,
-                                                bestNode.chainId !== undefined ? bestNode.chainId : -1,
+                                                bestNode.chainId !== undefined ? bestNode.chainId : "main",
                                                 bestNode.index !== undefined ? bestNode.index : 0
                                             )
                                         }
@@ -953,11 +964,12 @@ ApplicationWindow {
             id: gigViewOverlay
             anchors.fill: parent
             visible: window.gigViewVisible
-            z: 140
+            z: 50
             color: "#08080A"
 
             Column {
                 anchors.fill: parent
+                anchors.margins: 0
 
                 Rectangle {
                     width: parent.width
@@ -1275,7 +1287,7 @@ ApplicationWindow {
                             anchors.fill: parent
                             hoverEnabled: false
                             onClicked: {
-                                bridge.insertPlugin("uri://two-play/pipedal/pedalboard#Split", window.pluginInsertionIndex)
+                                bridge.insertPlugin("uri://two-play/pipedal/pedalboard#Split", signalCanvas.insertionChainId !== undefined ? signalCanvas.insertionChainId : "main", window.pluginInsertionIndex)
                                 window.pluginBrowserVisible = false
                             }
                         }
@@ -1305,7 +1317,7 @@ ApplicationWindow {
                                 Text { anchors.centerIn: parent; text: (bridge.favorites && bridge.favorites[modelData.uri]) ? "★" : "☆"; color: (bridge.favorites && bridge.favorites[modelData.uri]) ? "#FACC15" : "#777783"; font.pixelSize: 22 }
                                 MouseArea { anchors.fill: parent; hoverEnabled: false; onClicked: bridge.setFavorite(modelData.uri, !(bridge.favorites && bridge.favorites[modelData.uri])) }
                             }
-                            MouseArea { anchors.fill: parent; hoverEnabled: false; onClicked: { bridge.insertPlugin(modelData.uri, window.pluginInsertionIndex); window.pluginBrowserVisible = false } }
+                            MouseArea { anchors.fill: parent; hoverEnabled: false; onClicked: { bridge.insertPlugin(modelData.uri, signalCanvas.insertionChainId !== undefined ? signalCanvas.insertionChainId : "main", window.pluginInsertionIndex); window.pluginBrowserVisible = false } }
                         }
                     }
                 }
@@ -1316,23 +1328,71 @@ ApplicationWindow {
             id: bankPresetOverlay
             anchors.fill: parent
             visible: window.bankPresetOverlayVisible
-            z: 135
+            z: 50
             color: "#0A0A0C"
-            Row {
-                anchors.fill: parent
-                spacing: 1
 
+            Column {
+                anchors.fill: parent
+
+                // ── Dedicated 52px header ──────────────────────────────────
                 Rectangle {
-                    width: 260
-                    height: parent.height
-                    color: "#101014"
-                    Column {
-                        anchors.fill: parent
-                        anchors.margins: 12
-                        spacing: 8
-                        Text { text: "BANKS"; color: "#FFFFFF"; font.pixelSize: 18; font.bold: true; height: 42; verticalAlignment: Text.AlignVCenter }
-                        Repeater {
+                    width: parent.width
+                    height: 52
+                    color: "#0D0D10"
+                    border.color: "#1E1E24"
+                    border.width: 1
+
+                    Text {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 20
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "BANKS"
+                        color: "#8E8E9F"
+                        font.pixelSize: 13
+                        font.bold: true
+                    }
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "PRESETS"
+                        color: "#FFFFFF"
+                        font.pixelSize: 16
+                        font.bold: true
+                    }
+
+                    Rectangle {
+                        width: 40
+                        height: 40
+                        radius: 20
+                        anchors.right: parent.right
+                        anchors.rightMargin: 16
+                        anchors.top: parent.top
+                        anchors.topMargin: 6
+                        color: "#1A1A22"
+                        border.color: "#2E2E34"
+                        border.width: 1
+                        Text { anchors.centerIn: parent; text: "✕"; color: "#FFFFFF"; font.pixelSize: 18 }
+                        MouseArea { anchors.fill: parent; hoverEnabled: false; onClicked: window.bankPresetOverlayVisible = false }
+                    }
+                }
+
+                // ── Two-column body ───────────────────────────────────────
+                Row {
+                    width: parent.width
+                    height: parent.height - 52
+                    spacing: 1
+
+                    Rectangle {
+                        width: 260
+                        height: parent.height
+                        color: "#101014"
+                        ListView {
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 8
+                            clip: true
                             model: bridge ? (bridge.bankIndex.banks || []) : []
+                            header: Text { text: ""; height: 0 }
                             delegate: Rectangle {
                                 width: 236
                                 height: 54
@@ -1345,39 +1405,16 @@ ApplicationWindow {
                             }
                         }
                     }
-                }
 
-                Rectangle {
-                    width: parent.width - 260
-                    height: parent.height
-                    color: "#0A0A0C"
-                    Column {
-                        anchors.fill: parent
-                        anchors.margins: 12
-                        spacing: 8
-                        Row {
-                            width: parent.width
-                            height: 48
-                            Text { text: "PRESETS"; color: "#FFFFFF"; font.pixelSize: 18; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
-                            Item { width: parent.width - 96; height: 1 }
-                            Rectangle {
-                                width: 44
-                                height: 44
-                                anchors.right: parent.right
-                                anchors.rightMargin: 16
-                                anchors.top: parent.top
-                                anchors.topMargin: 12
-                                radius: 22
-                                color: "#1A1A22"
-                                Text { anchors.centerIn: parent; text: "✕"; color: "#FFFFFF"; font.pixelSize: 18 }
-                                MouseArea { anchors.fill: parent; hoverEnabled: false; onClicked: window.bankPresetOverlayVisible = false }
-                            }
-                        }
+                    Rectangle {
+                        width: parent.width - 261
+                        height: parent.height
+                        color: "#0A0A0C"
                         ListView {
-                            width: parent.width
-                            height: parent.height - 56
-                            clip: true
+                            anchors.fill: parent
+                            anchors.margins: 12
                             spacing: 8
+                            clip: true
                             model: bridge ? ((bridge.bankPresets && bridge.bankPresets.length) ? bridge.bankPresets : bridge.presetsList) : []
                             delegate: Rectangle {
                                 width: parent.width
@@ -1491,7 +1528,181 @@ ApplicationWindow {
                 }
             }
         }
-    }
+
+        // ── Device & System Modal (z:50, two-tap confirm) ─────────────────
+        Rectangle {
+            id: settingsModal
+            anchors.fill: parent
+            visible: window.settingsModalVisible
+            z: 50
+            color: "#00000099"
+
+            Rectangle {
+                anchors.centerIn: parent
+                width: 420
+                height: 300
+                radius: 16
+                color: "#111115"
+                border.color: "#2E2E34"
+                border.width: 1
+
+                Column {
+                    anchors.fill: parent
+                    anchors.margins: 20
+                    spacing: 16
+
+                    // Header with top-right menu button trigger and close button
+                    RowLayout {
+                        width: parent.width
+                        spacing: 12
+
+                        Text {
+                            text: "DEVICE & SYSTEM"
+                            color: "#FFFFFF"
+                            font.pixelSize: 16
+                            font.bold: true
+                            Layout.fillWidth: true
+                        }
+
+                        // Settings menu button (top-right)
+                        Rectangle {
+                            width: 36
+                            height: 36
+                            radius: 18
+                            color: "#1E1E24"
+                            Text { anchors.centerIn: parent; text: "⚙"; color: "#FFFFFF"; font.pixelSize: 16 }
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: false
+                                onClicked: window.settingsModalVisible = true
+                            }
+                        }
+
+                        // Close button
+                        Rectangle {
+                            width: 36
+                            height: 36
+                            radius: 18
+                            color: "#1E1E24"
+                            Text { anchors.centerIn: parent; text: "✕"; color: "#FFFFFF"; font.pixelSize: 16 }
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: false
+                                onClicked: {
+                                    window.settingsModalVisible = false
+                                    window.settingsConfirmState = 0
+                                }
+                            }
+                        }
+                    }
+
+                    // Server info
+                    Rectangle {
+                        width: parent.width
+                        height: 54
+                        radius: 8
+                        color: "#0E0E12"
+                        border.color: "#1E1E28"
+                        border.width: 1
+                        Column {
+                            anchors.centerIn: parent
+                            spacing: 4
+                            Text { text: "HOST  " + (bridge ? bridge.hostAddress : "—"); color: "#8E8E9F"; font.pixelSize: 11; horizontalAlignment: Text.AlignHCenter; anchors.horizontalCenter: parent.horizontalCenter }
+                            Text { text: "SERVER  " + (bridge ? bridge.serverVersion : "—"); color: "#8E8E9F"; font.pixelSize: 11; horizontalAlignment: Text.AlignHCenter; anchors.horizontalCenter: parent.horizontalCenter }
+                        }
+                    }
+
+                    // Action buttons
+                    Row {
+                        width: parent.width
+                        spacing: 12
+
+                        // REBOOT PI
+                        Rectangle {
+                            width: (parent.width - 12) / 2
+                            height: 72
+                            radius: 12
+                            color: window.settingsConfirmState === 1 ? "#92400E" : "#1C1C20"
+                            border.color: window.settingsConfirmState === 1 ? "#F59E0B" : "#3F3F46"
+                            border.width: 2
+
+                            Column {
+                                anchors.centerIn: parent
+                                spacing: 4
+                                Text {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    text: window.settingsConfirmState === 1 ? "TAP AGAIN TO\nCONFIRM REBOOT" : "REBOOT PI"
+                                    color: window.settingsConfirmState === 1 ? "#F59E0B" : "#FFFFFF"
+                                    font.pixelSize: window.settingsConfirmState === 1 ? 10 : 14
+                                    font.bold: true
+                                    horizontalAlignment: Text.AlignHCenter
+                                }
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: false
+                                onClicked: {
+                                    if (window.settingsConfirmState === 1) {
+                                        bridge.rebootPi()
+                                        window.settingsModalVisible = false
+                                        window.settingsConfirmState = 0
+                                    } else {
+                                        window.settingsConfirmState = 1
+                                    }
+                                }
+                            }
+                        }
+
+                        // SHUTDOWN PI
+                        Rectangle {
+                            width: (parent.width - 12) / 2
+                            height: 72
+                            radius: 12
+                            color: window.settingsConfirmState === 2 ? "#7F1D1D" : "#1C1C20"
+                            border.color: window.settingsConfirmState === 2 ? "#EF4444" : "#3F3F46"
+                            border.width: 2
+
+                            Column {
+                                anchors.centerIn: parent
+                                spacing: 4
+                                Text {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    text: window.settingsConfirmState === 2 ? "TAP AGAIN TO\nCONFIRM SHUTDOWN" : "SHUTDOWN PI"
+                                    color: window.settingsConfirmState === 2 ? "#EF4444" : "#FFFFFF"
+                                    font.pixelSize: window.settingsConfirmState === 2 ? 10 : 14
+                                    font.bold: true
+                                    horizontalAlignment: Text.AlignHCenter
+                                }
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: false
+                                onClicked: {
+                                    if (window.settingsConfirmState === 2) {
+                                        bridge.shutdownPi()
+                                        window.settingsModalVisible = false
+                                        window.settingsConfirmState = 0
+                                    } else {
+                                        window.settingsConfirmState = 2
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Tap backdrop to cancel
+            MouseArea {
+                anchors.fill: parent
+                z: -1
+                hoverEnabled: false
+                onClicked: {
+                    window.settingsModalVisible = false
+                    window.settingsConfirmState = 0
+                }
+            }
+        }
     }
     Connections {
         target: bridge
