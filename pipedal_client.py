@@ -146,6 +146,8 @@ def format_control_units(units: str) -> str:
 # PiPedalBridge (Qt QObject for QML Integration)
 # ---------------------------------------------------------------------------
 class PiPedalBridge(QObject):
+    hostAddressChanged = Signal()
+    serverVersionChanged = Signal()
     """
     Bridge connecting the asyncio PiPedal WebSocket client to Qt QML.
     Strictly reflects live state from the Pi (zero fake/demo mock data).
@@ -210,6 +212,10 @@ class PiPedalBridge(QObject):
         self._plugin_catalog: List[Dict[str, Any]] = []
         self._bank_index: Dict[str, Any] = {"selectedBank": -1, "banks": []}
         self._bank_presets: List[Dict[str, Any]] = []
+
+        # Host and server version properties
+        self._host_address: str = config.PI_HOST
+        self._server_version: str = ""
 
         # Asyncio worker client reference
         self._async_client: Optional[PiPedalAsyncClient] = None
@@ -382,6 +388,16 @@ class PiPedalBridge(QObject):
     @Property("QVariantList", notify=presetsListChanged)
     def bankPresets(self) -> List[Dict[str, Any]]:
         return self._bank_presets
+
+    @Property(str, notify=hostAddressChanged)
+    def hostAddress(self) -> str:
+        """The PiPedal server address (host)."""
+        return self._host_address
+
+    @Property(str, notify=serverVersionChanged)
+    def serverVersion(self) -> str:
+        """The PiPedal server version string."""
+        return self._server_version
 
     def filtered_plugin_catalog(self, category: str = "ALL", search_text: str = "") -> List[Dict[str, Any]]:
         result = []
@@ -714,6 +730,12 @@ class PiPedalBridge(QObject):
         self.selectedPedalChanged.emit()
 
 
+# Module-level constants for tree helpers
+SPLIT_URI = "uri://two-play/pipedal/pedalboard#Split"
+EMPTY_URI = "uri://two-play/pipedal/pedalboard#Empty"
+BLOCK_H = 68.0
+INNER_GAP = 26.0
+
 # ---------------------------------------------------------------------------
 # PiPedalAsyncClient (Runs in background daemon thread)
 # ---------------------------------------------------------------------------
@@ -978,7 +1000,10 @@ class PiPedalAsyncClient:
         # 2. Server Version
         version_info = await self.request("version")
         if isinstance(version_info, dict):
-            print(f"[PiPedal] Version: {version_info.get('serverVersion', 'Unknown')}")
+            server_version = str(version_info.get("serverVersion", "Unknown"))
+            print(f"[PiPedal] Version: {server_version}")
+            self.bridge._server_version = server_version
+            self.bridge.serverVersionChanged.emit()
         else:
             print(f"[PiPedal] Version: {version_info}")
 
@@ -1266,6 +1291,7 @@ class PiPedalAsyncClient:
         BRANCH_PAD = 24
         V_GAP = 92
         ADD_H = 44
+        INNER_GAP = 26.0
 
         SPLIT_URI = "uri://two-play/pipedal/pedalboard#Split"
         EMPTY_URI = "uri://two-play/pipedal/pedalboard#Empty"
@@ -1320,6 +1346,52 @@ class PiPedalAsyncClient:
             ):
                 self.bridge._effect_blocks.append(block)
 
+        # ---- Recursive measure helper for nested splits ------------------------
+        def measure_chain(items_to_measure: List[Dict[str, Any]]) -> Tuple[float, float]:
+            """Measure top and bottom extents of a chain.
+
+            Returns (top_extent, bot_extent) where each extent is the vertical space
+            from the split node to the end of that branch.
+            Normal effect blocks contribute (BLOCK_H / 2.0, BLOCK_H / 2.0).
+            Empty chains return (BLOCK_H / 2.0, BLOCK_H / 2.0).
+
+            For PedalboardSplitItem:
+                top_t, top_b = measure_chain(item.get("topChain", []) or [])
+                bot_t, bot_b = measure_chain(item.get("bottomChain", []) or [])
+                top_offset = top_b + INNER_GAP / 2.0
+                bot_offset = bot_t + INNER_GAP / 2.0
+                return (top_t + top_offset, bot_b + bot_offset)
+            """
+            # Empty chains return equal extents
+            if not items_to_measure:
+                return (BLOCK_H / 2.0, BLOCK_H / 2.0)
+
+            top_extent = 0.0
+            bot_extent = 0.0
+
+            for item in items_to_measure:
+                uri = item.get("uri", "")
+                inst_id = int(item.get("instanceId", -1))
+
+                if inst_id < 0 or uri == EMPTY_URI:
+                    continue
+
+                if uri == SPLIT_URI:
+                    # Recursively measure nested split branches
+                    top_t, top_b = measure_chain(item.get("topChain", []) or [])
+                    bot_t, bot_b = measure_chain(item.get("bottomChain", []) or [])
+
+                    top_offset = top_b + INNER_GAP / 2.0
+                    bot_offset = bot_t + INNER_GAP / 2.0
+
+                    return (top_t + top_offset, bot_b + bot_offset)
+                else:
+                    # Normal effect block returns equal extents
+                    return (BLOCK_H / 2.0, BLOCK_H / 2.0)
+
+            # If no valid items found, return empty extents
+            return (0.0, 0.0)
+
         # ---- Helpers ----------------------------------------------------------
         next_slot_id = [-1000]
 
@@ -1335,7 +1407,7 @@ class PiPedalAsyncClient:
                 "height": ADD_H,
                 "label": "",
                 "active": True,
-                "chainId": int(chain_id),
+                "chainId": str(chain_id),
                 "index": int(index),
             })
             next_slot_id[0] -= 1
@@ -1353,6 +1425,38 @@ class PiPedalAsyncClient:
                 else:
                     total += 1
             return total
+
+        def _resolve_chain_items(items: List[Dict[str, Any]], chain_id: int) -> List[Dict[str, Any]]:
+            """Resolve items for a given chain_id.
+            
+            For chain_id == "main" (or -1), return the root items list.
+            For chain_id like "split:<id>:top", locate the split by id and return topChain.
+            For chain_id like "split:<id>:bottom", locate the split by id and return bottomChain.
+            """
+            if chain_id < 0:
+                return items
+            
+            # Parse chain_id format: "split:<split_id>:top" or "split:<split_id>:bottom"
+            parts = str(chain_id).split(":")
+            if len(parts) != 3 or parts[0] != "split":
+                return items
+            
+            split_id_str, direction = parts[1], parts[2]
+            try:
+                split_id = int(split_id_str)
+            except ValueError:
+                return items
+            
+            # Find the split node by instanceId
+            for item in items:
+                if isinstance(item, dict) and int(item.get("instanceId", -1)) == split_id:
+                    if direction == "top":
+                        return item.setdefault("topChain", [])
+                    elif direction == "bottom":
+                        return item.setdefault("bottomChain", [])
+            
+            # Split not found, return original items
+            return items
 
         def branch_active(cv_map: Dict[str, float], top: bool) -> bool:
             split_type = cv_map.get("splitType", 0.0)
@@ -1401,19 +1505,31 @@ class PiPedalAsyncClient:
                         "label": label,
                         "splitMode": mode,
                         "active": True,
-                        "chainId": int(chain_id),
+                        "chainId": str(chain_id),
                         "index": effect_index,
                     })
 
                     fork_x = split_x + SPLIT_D + FORK_LEAD
                     branch_start_x = fork_x + BRANCH_PAD
-                    top_y = center_y - V_GAP / 2.0
-                    bot_y = center_y + V_GAP / 2.0
-                    top_active = bool(active) and branch_active(cv_map, True)
-                    bot_active = bool(active) and branch_active(cv_map, False)
-
+                    
+                    # Extract chain items before measuring (fix: define top_items/bottom_items before use)
                     top_items = item.get("topChain", []) or []
                     bottom_items = item.get("bottomChain", []) or []
+                    
+                    # Measure nested split branches dynamically for both chains
+                    top_t, top_b = measure_chain(top_items)
+                    bot_t, bot_b = measure_chain(bottom_items)
+                    
+                    # Calculate offsets for each branch
+                    top_offset = top_b + INNER_GAP / 2.0
+                    bot_offset = bot_t + INNER_GAP / 2.0
+                    
+                    # Place split branches at correct vertical positions
+                    top_y = center_y - top_offset
+                    bot_y = center_y + bot_offset
+                    
+                    top_active = bool(active) and branch_active(cv_map, True)
+                    bot_active = bool(active) and branch_active(cv_map, False)
 
                     top_end_x = layout_chain(top_items, branch_start_x, top_y, top_active, inst_id)
                     bot_end_x = layout_chain(bottom_items, branch_start_x, bot_y, bot_active, inst_id)
@@ -1490,7 +1606,7 @@ class PiPedalAsyncClient:
                     "color": block.get("color", "#94A3B8"),
                     "active": node_active,
                     "bypassed": bool(block.get("bypassed", False)),
-                    "chainId": int(chain_id),
+                    "chainId": str(chain_id),
                     "index": effect_index,
                 })
                 prev_x = x + BLOCK_W
@@ -1513,7 +1629,7 @@ class PiPedalAsyncClient:
             "index": 0,
         })
 
-        main_end_x = layout_chain(items, CAP_W, center_y, True, -1)
+        main_end_x = layout_chain(items, CAP_W, center_y, True, "main")
         out_x = main_end_x + H_GAP
         wires.append({
             "name": "out",
@@ -1575,6 +1691,42 @@ class PiPedalAsyncClient:
         self.bridge._signal_canvas_height = canvas_height
         self.bridge.signalTreeChanged.emit()
 
+    def _resolve_chain_items(self, items: List[Dict[str, Any]], chain_id: int) -> List[Dict[str, Any]]:
+        """Resolve items for a given chain_id.
+        
+        For chain_id == "main" (or -1), return the root items list.
+        For chain_id like "split:<id>:top", locate the split by id and return topChain.
+        For chain_id like "split:<id>:bottom", locate the split by id and return bottomChain.
+        """
+        # Handle None, empty string, "main", or negative int as root/main trunk
+        if chain_id is None:
+            return items
+        chain_id_str = str(chain_id).strip()
+        if chain_id_str in ("", "main", "-1") or (isinstance(chain_id, int) and chain_id < 0):
+            return items
+        
+        # Parse chain_id format: "split:<split_id>:top" or "split:<split_id>:bottom"
+        parts = chain_id_str.split(":")
+        if len(parts) != 3 or parts[0] != "split":
+            return items
+        
+        split_id_str, direction = parts[1], parts[2]
+        try:
+            split_id = int(split_id_str)
+        except ValueError:
+            return items
+        
+        # Find the split node by instanceId
+        for item in items:
+            if isinstance(item, dict) and int(item.get("instanceId", -1)) == split_id:
+                if direction == "top":
+                    return item.setdefault("topChain", [])
+                elif direction == "bottom":
+                    return item.setdefault("bottomChain", [])
+        
+        # Split not found, return original items
+        return items
+
     def _flatten_pedalboard_items(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Recursively flatten pedalboard chains and filter out synthetic/empty items."""
         result = []
@@ -1594,6 +1746,61 @@ class PiPedalAsyncClient:
             else:
                 result.append(item)
         return result
+
+    # -----------------------------------------------------------------------
+    # Tree Helpers (Class Methods on PiPedalAsyncClient)
+    # -----------------------------------------------------------------------
+    def _find_item_by_id(self, items: List[Dict[str, Any]], instance_id: int) -> Optional[Dict[str, Any]]:
+        """Recursively search for an item by instance_id in topChain and bottomChain of Split blocks."""
+        for item in items:
+            if isinstance(item, dict) and item.get("instanceId") == instance_id:
+                return item
+            uri = item.get("uri", "")
+            if uri == SPLIT_URI:
+                top = item.get("topChain", []) or []
+                bot = item.get("bottomChain", []) or []
+                found_top = self._find_item_by_id(top, instance_id)
+                if found_top is not None:
+                    return found_top
+                found_bot = self._find_item_by_id(bot, instance_id)
+                if found_bot is not None:
+                    return found_bot
+        return None
+
+    def _find_and_remove_item(self, items: List[Dict[str, Any]], instance_id: int) -> Optional[Dict[str, Any]]:
+        """Recursively find and remove an item by instance_id from topChain and bottomChain of Split blocks."""
+        for i, item in enumerate(items):
+            if isinstance(item, dict) and item.get("instanceId") == instance_id:
+                return items.pop(i)
+            uri = item.get("uri", "")
+            if uri == SPLIT_URI:
+                top = item.get("topChain", []) or []
+                bot = item.get("bottomChain", []) or []
+                found_top = self._find_and_remove_item(top, instance_id)
+                if found_top is not None:
+                    return found_top
+                found_bot = self._find_and_remove_item(bot, instance_id)
+                if found_bot is not None:
+                    return found_bot
+        return None
+
+    def _insert_item_before(self, items: List[Dict[str, Any]], target_instance_id: int, item_to_insert: Dict[str, Any]) -> bool:
+        """Recursively insert an item before the one with target_instance_id in topChain and bottomChain of Split blocks."""
+        for i, item in enumerate(items):
+            if isinstance(item, dict) and item.get("instanceId") == target_instance_id:
+                items.insert(i, item_to_insert)
+                return True
+            uri = item.get("uri", "")
+            if uri == SPLIT_URI:
+                top = item.get("topChain", []) or []
+                bot = item.get("bottomChain", []) or []
+                if self._insert_item_before(top, target_instance_id, item_to_insert):
+                    return True
+                if self._insert_item_before(bot, target_instance_id, item_to_insert):
+                    return True
+        # If not found in children, append to current list
+        items.append(item_to_insert)
+        return True
 
     # -----------------------------------------------------------------------
     # Outgoing JSON-RPC Requests & Fire-and-Forget Notifications
@@ -1649,42 +1856,6 @@ class PiPedalAsyncClient:
             return
         if not self._insert_item_before(pedalboard.get("items", []), int(to_instance_id), from_item):
             pedalboard.setdefault("items", []).append(from_item)
-        body = {"clientId": self.client_id, "pedalboard": pedalboard}
-        self._schedule_coro(self._send_notification("updateCurrentPedalboard", body))
-
-    def drop_block(self, instance_id: int, target_chain_id: int, target_index: int):
-        pedalboard = json.loads(json.dumps(self.raw_pedalboard))
-        items = pedalboard.get("items", [])
-        moving = self._find_and_remove_item(items, int(instance_id))
-        if moving is None:
-            return
-
-        def insert_at_flat_index(chain_items: List[Dict[str, Any]], flat_index: int) -> bool:
-            flat_items = self._flatten_pedalboard_items(chain_items)
-            if flat_index <= 0:
-                if chain_items:
-                    chain_items.insert(0, moving)
-                    return True
-            if flat_index < len(flat_items):
-                target_id = int(flat_items[flat_index].get("instanceId", -1))
-                if self._insert_item_before(chain_items, target_id, moving):
-                    return True
-            chain_items.append(moving)
-            return True
-
-        if target_chain_id < 0:
-            insert_at_flat_index(items, max(0, int(target_index)))
-        else:
-            target_found = False
-            for item in items:
-                if int(item.get("instanceId", -1)) == int(target_chain_id) and item.get("uri") == "uri://two-play/pipedal/pedalboard#Split":
-                    top_chain = item.setdefault("topChain", [])
-                    insert_at_flat_index(top_chain, max(0, int(target_index)))
-                    target_found = True
-                    break
-            if not target_found:
-                insert_at_flat_index(items, max(0, int(target_index)))
-
         body = {"clientId": self.client_id, "pedalboard": pedalboard}
         self._schedule_coro(self._send_notification("updateCurrentPedalboard", body))
 
@@ -1766,9 +1937,14 @@ class PiPedalAsyncClient:
         self._schedule_coro(self._send_notification("setSnapshots", body))
 
     def insert_plugin(self, plugin_uri: str, insertion_index: int):
+        """Insert a plugin at the given index in the main chain or split branch.
+        
+        The insertion_index is interpreted as a flat index into the resolved chain items.
+        """
         plugin = self.ui_plugins_by_uri.get(plugin_uri)
         if not plugin:
             return
+        
         pedalboard = json.loads(json.dumps(self.raw_pedalboard))
         new_item = {
             "instanceId": int(pedalboard.get("nextInstanceId", 0)) + 1,
@@ -1786,58 +1962,53 @@ class PiPedalAsyncClient:
             "vstState": "",
         }
         pedalboard["nextInstanceId"] = int(new_item["instanceId"])
-        items = pedalboard.setdefault("items", [])
-        items.insert(max(0, insertion_index), new_item)
+        
+        # Resolve the target chain items using _resolve_chain_items
+        resolved_chain = self._resolve_chain_items(pedalboard.get("items", []), insertion_index)
+        
+        # Insert at the correct position in the resolved chain
+        if isinstance(resolved_chain, list):
+            resolved_chain.insert(max(0, insertion_index), new_item)
+        
         body = {"clientId": self.client_id, "pedalboard": pedalboard}
         self._schedule_coro(self._send_notification("updateCurrentPedalboard", body))
 
-    def delete_block(self, instance_id: int):
-        pedalboard = json.loads(json.dumps(self.raw_pedalboard))
-        if self._find_and_remove_item(pedalboard.get("items", []), int(instance_id)) is not None:
-            body = {"clientId": self.client_id, "pedalboard": pedalboard}
-            self._schedule_coro(self._send_notification("updateCurrentPedalboard", body))
-
-    def move_block(self, instance_id: int, direction: int):
+    def drop_block(self, instance_id: int, target_chain_id: int, target_index: int):
+        """Drop a block onto a wire gap.
+        
+        The target_chain_id can be:
+        - A negative number for the main chain
+        - "split:<id>:top" or "split:<id>:bottom" for split branches
+        
+        The target_index is a flat index into the resolved chain items.
+        """
         pedalboard = json.loads(json.dumps(self.raw_pedalboard))
         items = pedalboard.get("items", [])
-        flat_ids = [int(v.get("instanceId", -1)) for v in self._flatten_pedalboard_items(items)]
-        if instance_id not in flat_ids:
+        moving = self._find_and_remove_item(items, int(instance_id))
+        if moving is None:
             return
-        index = flat_ids.index(instance_id)
-        target_index = max(0, min(len(flat_ids) - 1, index + int(direction)))
-        target_id = flat_ids[target_index]
-        if target_id == instance_id:
-            return
-        moving = self._find_and_remove_item(items, instance_id)
-        if moving is not None:
-            self._insert_item_before(items, target_id, moving)
+
+        # Resolve the target chain items using _resolve_chain_items
+        resolved_chain = self._resolve_chain_items(items, target_chain_id)
+        
+        def insert_at_flat_index(chain_items: List[Dict[str, Any]], flat_index: int) -> bool:
+            flat_items = self._flatten_pedalboard_items(chain_items)
+            if flat_index <= 0:
+                if chain_items:
+                    chain_items.insert(0, moving)
+                    return True
+            if flat_index < len(flat_items):
+                target_id = int(flat_items[flat_index].get("instanceId", -1))
+                if self._insert_item_before(chain_items, target_id, moving):
+                    return True
+            chain_items.append(moving)
+            return True
+
+        # Insert at the resolved chain with the given flat index
+        insert_at_flat_index(resolved_chain, max(0, int(target_index)))
+
         body = {"clientId": self.client_id, "pedalboard": pedalboard}
         self._schedule_coro(self._send_notification("updateCurrentPedalboard", body))
-
-    def _find_and_remove_item(self, items: List[Dict[str, Any]], instance_id: int) -> Optional[Dict[str, Any]]:
-        for index, item in enumerate(items):
-            if int(item.get("instanceId", -1)) == instance_id:
-                return items.pop(index)
-            if item.get("uri") == "uri://two-play/pipedal/pedalboard#Split":
-                found = self._find_and_remove_item(item.get("topChain", []), instance_id)
-                if found is not None:
-                    return found
-                found = self._find_and_remove_item(item.get("bottomChain", []), instance_id)
-                if found is not None:
-                    return found
-        return None
-
-    def _insert_item_before(self, items: List[Dict[str, Any]], instance_id: int, item_to_insert: Dict[str, Any]) -> bool:
-        for index, item in enumerate(items):
-            if int(item.get("instanceId", -1)) == instance_id:
-                items.insert(index, item_to_insert)
-                return True
-            if item.get("uri") == "uri://two-play/pipedal/pedalboard#Split":
-                if self._insert_item_before(item.get("topChain", []), instance_id, item_to_insert):
-                    return True
-                if self._insert_item_before(item.get("bottomChain", []), instance_id, item_to_insert):
-                    return True
-        return False
 
     def _schedule_coro(self, coro):
         """Safely schedule an async coroutine on the background event loop."""
