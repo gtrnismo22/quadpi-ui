@@ -1159,9 +1159,7 @@ class PiPedalAsyncClient:
         self.raw_pedalboard = pedalboard
         self.bridge._snapshot_values = pedalboard.get("snapshots", []) or []
         self.bridge._snapshots = self.bridge._snapshot_values
-        self.bridge._selected_snapshot = int(pedalboard.get("selectedSnapshot", -1))
-        self.bridge._refresh_scenes()
-        self.bridge.snapshotsChanged.emit()
+        self.bridge._sig_snapshot_selected.emit(int(pedalboard.get("selectedSnapshot", -1)))
         raw_items = pedalboard.get("items", [])
         flattened_items = self._flatten_pedalboard_items(raw_items)
 
@@ -1177,45 +1175,39 @@ class PiPedalAsyncClient:
             # Map parameter values from pedalboard item
             control_val_map = {cv.get("key"): cv.get("value") for cv in item.get("controlValues", [])}
 
-            controls = []
-            for ctrl in plugin_def.get("controls", []):
-                # Skip bypass controls and hidden controls
-                if ctrl.get("is_bypass", False) or ctrl.get("not_on_gui", False):
-                    continue
-
-                symbol = ctrl.get("symbol", "")
-                ctrl_name = str(ctrl.get("name") or symbol or "Control")
-                min_v = float(ctrl.get("min_value", 0.0))
-                max_v = float(ctrl.get("max_value", 1.0))
-                def_v = float(ctrl.get("default_value", (min_v + max_v) / 2.0))
-                current_v = float(control_val_map.get(symbol, def_v))
-
-                range_steps = int(ctrl.get("range_steps", 0) or 0)
-                is_integer = bool(ctrl.get("integer_property", False)) or range_steps == 1
-                is_log = bool(ctrl.get("is_logarithmic", False))
-                is_toggle = bool(ctrl.get("toggled_property", False))
-                is_enum = bool(ctrl.get("enumeration_property", False))
-
-                scale_points = [
-                    {
-                        "value": float(sp.get("value", 0.0)),
-                        "label": str(sp.get("label") or sp.get("value", "") or "Option"),
-                    }
-                    for sp in ctrl.get("scale_points", [])
-                ]
-
-                if len(scale_points) > 0:
-                    is_enum = True
-                if not is_toggle and min_v == 0.0 and max_v == 1.0 and is_integer and len(scale_points) <= 2:
-                    is_toggle = True
-
-                unit_str = format_control_units(ctrl.get("custom_units") or ctrl.get("units") or "")
-
-                controls.append(
-                    {
+            if not hasattr(self, "_cached_ctrl_templates"):
+                self._cached_ctrl_templates = {}
+            templates = self._cached_ctrl_templates.get(uri)
+            if templates is None:
+                templates = []
+                for ctrl in plugin_def.get("controls", []):
+                    if ctrl.get("is_bypass", False) or ctrl.get("not_on_gui", False):
+                        continue
+                    symbol = ctrl.get("symbol", "")
+                    ctrl_name = str(ctrl.get("name") or symbol or "Control")
+                    min_v = float(ctrl.get("min_value", 0.0))
+                    max_v = float(ctrl.get("max_value", 1.0))
+                    def_v = float(ctrl.get("default_value", (min_v + max_v) / 2.0))
+                    range_steps = int(ctrl.get("range_steps", 0) or 0)
+                    is_integer = bool(ctrl.get("integer_property", False)) or range_steps == 1
+                    is_log = bool(ctrl.get("is_logarithmic", False))
+                    is_toggle = bool(ctrl.get("toggled_property", False))
+                    is_enum = bool(ctrl.get("enumeration_property", False))
+                    scale_points = [
+                        {
+                            "value": float(sp.get("value", 0.0)),
+                            "label": str(sp.get("label") or sp.get("value", "") or "Option"),
+                        }
+                        for sp in ctrl.get("scale_points", [])
+                    ]
+                    if len(scale_points) > 0:
+                        is_enum = True
+                    if not is_toggle and min_v == 0.0 and max_v == 1.0 and is_integer and len(scale_points) <= 2:
+                        is_toggle = True
+                    unit_str = str(format_control_units(ctrl.get("custom_units") or ctrl.get("units") or ""))
+                    templates.append({
                         "symbol": symbol,
                         "name": ctrl_name,
-                        "value": current_v,
                         "min": min_v,
                         "max": max_v,
                         "default": def_v,
@@ -1224,9 +1216,14 @@ class PiPedalAsyncClient:
                         "isEnum": is_enum,
                         "isToggle": is_toggle,
                         "scalePoints": scale_points,
-                        "unit": str(unit_str),
-                    }
-                )
+                        "unit": unit_str,
+                    })
+                self._cached_ctrl_templates[uri] = templates
+
+            controls = [
+                {**tpl, "value": float(control_val_map.get(tpl["symbol"], tpl["default"]))}
+                for tpl in templates
+            ]
 
             enabled = bool(item.get("isEnabled", True))
             file_properties = []
