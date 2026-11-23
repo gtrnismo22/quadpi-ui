@@ -7,6 +7,7 @@ ApplicationWindow {
     width: 800
     height: 480
     visible: true
+    visibility: Qt.platform.os === "linux" ? Window.FullScreen : Window.Windowed
     title: "PiPedal Quad Cortex"
     color: "#000000"
 
