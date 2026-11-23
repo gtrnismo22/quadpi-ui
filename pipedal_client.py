@@ -634,7 +634,9 @@ class PiPedalBridge(QObject):
                             return True
                     return False
                 _set_pb_enabled(self._async_client.raw_pedalboard.get("items", []) or [])
-            self.effectBlocksChanged.emit()
+            self.laneChanged.emit()
+        self.signalTreeChanged.emit()
+        self.effectBlocksChanged.emit()
             if hasattr(self, '_signal_nodes') and isinstance(self._signal_nodes, list):
                 new_nodes = []
                 for nd in self._signal_nodes:
@@ -1308,10 +1310,10 @@ class PiPedalAsyncClient:
         self.bridge._lane2 = lane2[:8]
         self.bridge._lane3 = lane3[:8]
         self.bridge._lane4 = lane4[:8]
-        self.bridge.laneChanged.emit()
         self._build_recursive_signal_tree(raw_items, effect_by_id)
         self.bridge._sig_full_state_updated.emit()
-        print(f"[PiPedal] Loaded {len(bridge_effects)} live effect blocks onto pedalboard")
+        if not sys.platform.startswith("linux"):
+            print(f"[PiPedal] Loaded {len(bridge_effects)} live effect blocks onto pedalboard")
 
     def _build_recursive_signal_tree(self, items: List[Dict[str, Any]], effect_by_id: Dict[int, Dict[str, Any]]):
         def _exact_extent(chain_list):
@@ -1742,7 +1744,6 @@ class PiPedalAsyncClient:
         self.bridge._signal_wires = wires
         self.bridge._signal_canvas_width = canvas_width
         self.bridge._signal_canvas_height = canvas_height
-        self.bridge.signalTreeChanged.emit()
 
     def _resolve_chain_items(self, items: List[Dict[str, Any]], chain_id: int) -> List[Dict[str, Any]]:
         """Resolve items for a given chain_id.
