@@ -1,3 +1,4 @@
+import sys
 """
 PiPedal WebSocket Client and PySide6 QML Bridge
 Implements the exact PiPedal JSON-RPC protocol over WebSocket with asyncio,
