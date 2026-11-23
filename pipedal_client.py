@@ -634,9 +634,7 @@ class PiPedalBridge(QObject):
                             return True
                     return False
                 _set_pb_enabled(self._async_client.raw_pedalboard.get("items", []) or [])
-            self.laneChanged.emit()
-        self.signalTreeChanged.emit()
-        self.effectBlocksChanged.emit()
+            self.effectBlocksChanged.emit()
             if hasattr(self, '_signal_nodes') and isinstance(self._signal_nodes, list):
                 new_nodes = []
                 for nd in self._signal_nodes:
@@ -694,6 +692,8 @@ class PiPedalBridge(QObject):
         self.activePresetNameChanged.emit(self.activePresetName)
         self.presetChangedStatusChanged.emit(self._preset_changed)
         self.presetsListChanged.emit()
+        self.laneChanged.emit()
+        self.signalTreeChanged.emit()
         self.effectBlocksChanged.emit()
         self.selectedPedalIndexChanged.emit(self._selected_pedal_index)
         self.selectedPedalChanged.emit()
