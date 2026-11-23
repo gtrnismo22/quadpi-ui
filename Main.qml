@@ -403,19 +403,24 @@ ApplicationWindow {
                                 ctx.lineCap = "round";
                                 ctx.lineJoin = "round";
                                 var wires = bridge ? bridge.signalWires : [];
-                                for (var i = 0; i < wires.length; ++i) {
-                                    var points = wires[i].points || [];
-                                    if (points.length < 2)
-                                        continue;
-                                    ctx.strokeStyle = wires[i].active ? "#E4E4E7" : "#3F3F46";
-                                    ctx.beginPath();
-                                    ctx.moveTo(points[0].x, points[0].y);
-                                    for (var j = 1; j < points.length - 1; ++j) {
-                                        ctx.arcTo(points[j].x, points[j].y, points[j + 1].x, points[j + 1].y, 8);
+                                for (var pass = 0; pass < 2; ++pass) {
+                                    var drawActive = (pass === 1);
+                                    for (var i = 0; i < wires.length; ++i) {
+                                        if (Boolean(wires[i].active) !== drawActive)
+                                            continue;
+                                        var points = wires[i].points || [];
+                                        if (points.length < 2)
+                                            continue;
+                                        ctx.strokeStyle = drawActive ? "#E4E4E7" : "#3F3F46";
+                                        ctx.beginPath();
+                                        ctx.moveTo(points[0].x, points[0].y);
+                                        for (var j = 1; j < points.length - 1; ++j) {
+                                            ctx.arcTo(points[j].x, points[j].y, points[j + 1].x, points[j + 1].y, 8);
+                                        }
+                                        var last = points[points.length - 1];
+                                        ctx.lineTo(last.x, last.y);
+                                        ctx.stroke();
                                     }
-                                    var last = points[points.length - 1];
-                                    ctx.lineTo(last.x, last.y);
-                                    ctx.stroke();
                                 }
                             }
                         }
@@ -555,23 +560,26 @@ ApplicationWindow {
                                     anchors.fill: parent
                                     enabled: modelData.kind === "effect" || modelData.kind === "split"
                                     hoverEnabled: false
+                                    preventStealing: nodeRoot.lifting || dragged
                                     property real pressX: 0
                                     property real pressY: 0
                                     property bool dragged: false
+                                    property bool hasMoved: false
                                     property int draggingInstanceId: -1
 
                                     Timer {
                                         id: blockHoldTimer
-                                        interval: 200
+                                        interval: 160
                                         repeat: false
                                         onTriggered: effectMouse.beginLift()
                                     }
 
                                     function beginLift() {
-                                        if (modelData.kind !== "effect")
+                                        if (modelData.kind !== "effect" && modelData.kind !== "split")
                                             return;
                                         nodeRoot.lifting = true;
-                                        dragged = false;
+                                        dragged = true;
+                                        hasMoved = false;
                                         draggingInstanceId = modelData.instanceId;
                                         signalFlick.interactive = false;
                                         var centre = mapToItem(treeContainer, width / 2, height / 2);
@@ -583,68 +591,82 @@ ApplicationWindow {
                                         dragGhost.visible = true;
                                     }
 
+                                    function endBlockDrag() {
+                                        blockHoldTimer.stop();
+                                        nodeRoot.lifting = false;
+                                        dragged = false;
+                                        draggingInstanceId = -1;
+                                        dragGhost.visible = false;
+                                        signalFlick.interactive = true;
+                                    }
+
+                                    onCanceled: function () {
+                                        endBlockDrag();
+                                    }
+
                                     onPressed: function (mouse) {
-                                        if (modelData.kind === "effect") {
+                                        if (modelData.kind === "effect" || modelData.kind === "split") {
                                             pressX = mouse.x;
                                             pressY = mouse.y;
                                             dragged = false;
+                                            hasMoved = false;
                                             blockHoldTimer.start();
                                         }
                                     }
 
                                     onPositionChanged: function (mouse) {
-                                        if (!nodeRoot.lifting)
+                                        if (!nodeRoot.lifting) {
+                                            var dx = mouse.x - pressX;
+                                            var dy = mouse.y - pressY;
+                                            if (dx * dx + dy * dy > 64)
+                                                blockHoldTimer.stop();
                                             return;
+                                        }
+                                        if (Math.hypot(mouse.x - pressX, mouse.y - pressY) > 10)
+                                            hasMoved = true;
                                         var point = mapToItem(treeContainer, mouse.x, mouse.y);
                                         dragGhost.x = point.x - dragGhost.width / 2;
                                         dragGhost.y = point.y - dragGhost.height / 2;
-                                        var dx = mouse.x - pressX;
-                                        var dy = mouse.y - pressY;
-                                        if (dx * dx + dy * dy > 36)
-                                            dragged = true;
                                     }
 
-                                    onReleased: {
+                                    onReleased: function (mouse) {
                                         blockHoldTimer.stop();
-                                        if (!nodeRoot.lifting)
+                                        var wasLifting = nodeRoot.lifting;
+                                        var didMove = hasMoved;
+                                        var releasedId = draggingInstanceId;
+                                        var dropCenterX = dragGhost.x + dragGhost.width / 2;
+                                        var dropCenterY = dragGhost.y + dragGhost.height / 2;
+                                        endBlockDrag();
+                                        if (!wasLifting || !didMove) {
+                                            if (modelData.instanceId >= 0) {
+                                                bridge.selectPedalByInstance(modelData.instanceId);
+                                                window.editorVisible = true;
+                                            }
                                             return;
-                                        nodeRoot.lifting = false;
-                                        dragGhost.visible = false;
-                                        signalFlick.interactive = true;
-                                        draggingInstanceId = -1;
-                                        if (!dragged)
+                                        }
+                                        if (releasedId < 0)
                                             return;
-                                        var pt = signalCanvas.mapFromItem(dragGhost.parent, dragGhost.x + dragGhost.width / 2, dragGhost.y + dragGhost.height / 2);
-                                        
+                                        var pt = signalCanvas.mapFromItem(treeContainer, dropCenterX, dropCenterY);
                                         var targetNode = null;
-                                        var minDistance = 95;
+                                        var minDistance = 115;
                                         var targetNodes = bridge ? bridge.signalNodes : [];
                                         for (var i = 0; i < targetNodes.length; ++i) {
                                             var node = targetNodes[i];
-                                            if (node.kind !== "effect" && node.kind !== "addSlot")
+                                            if (node.kind !== "effect" && node.kind !== "split" && node.kind !== "addSlot")
                                                 continue;
-                                            if (node.instanceId === draggingInstanceId)
+                                            if (node.instanceId === releasedId)
                                                 continue;
-                                            var centerX = node.x + node.width / 2;
-                                            var centerY = node.y + node.height / 2;
-                                            var distance = Math.hypot(pt.x - centerX, pt.y - centerY);
+                                            var clampedX = Math.max(node.x, Math.min(pt.x, node.x + node.width));
+                                            var clampedY = Math.max(node.y, Math.min(pt.y, node.y + node.height));
+                                            var distance = Math.hypot(pt.x - clampedX, pt.y - clampedY);
                                             if (distance < minDistance) {
                                                 minDistance = distance;
                                                 targetNode = node;
                                             }
                                         }
                                         if (targetNode) {
-                                            var targetIndex = (targetNode.kind === "effect" && pt.x > targetNode.x + targetNode.width / 2) ? (targetNode.index + 1) : targetNode.index;
-                                            bridge.dropBlock(draggingInstanceId, String(targetNode.chainId), targetIndex);
-                                        }
-                                    }
-
-                                    onClicked: {
-                                        if (nodeRoot.lifting || dragged)
-                                            return;
-                                        if (modelData.instanceId >= 0) {
-                                            bridge.selectPedalByInstance(modelData.instanceId);
-                                            window.editorVisible = true;
+                                            var targetIndex = ((targetNode.kind === "effect" || targetNode.kind === "split") && pt.x > targetNode.x + targetNode.width / 2) ? (targetNode.index + 1) : targetNode.index;
+                                            bridge.dropBlock(releasedId, String(targetNode.chainId), targetIndex);
                                         }
                                     }
                                 }
@@ -782,55 +804,52 @@ ApplicationWindow {
                 border.color: "#2E2E34"
                 border.width: 1
 
-                Column {
-                    anchors.fill: parent
-
-                    Rectangle {
-                        visible: window.blockMenuVisible
-                        z: 60
-                        x: 8
-                        y: 42
-                        width: 330
-                        height: 48
-                        radius: 8
-                        color: "#18181C"
-                        border.color: "#34343C"
-                        border.width: 1
-                        Row {
-                            anchors.fill: parent
-                            anchors.margins: 5
-                            spacing: 6
-                            Repeater {
-                                model: ["MOVE LEFT", "MOVE RIGHT", "DELETE BLOCK"]
-                                delegate: Rectangle {
-                                    width: modelData === "DELETE BLOCK" ? 110 : 100
-                                    height: 38
-                                    radius: 19
-                                    color: modelData === "DELETE BLOCK" ? "#7F1D1D" : "#27272A"
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: modelData
-                                        color: "#FFFFFF"
-                                        font.pixelSize: 9
-                                        font.bold: true
-                                    }
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        hoverEnabled: false
-                                        onClicked: {
-                                            if (modelData === "MOVE LEFT")
-                                                bridge.moveBlock(window.selectedPedal.instanceId, -1);
-                                            else if (modelData === "MOVE RIGHT")
-                                                bridge.moveBlock(window.selectedPedal.instanceId, 1);
-                                            else
-                                                bridge.deleteBlock(window.selectedPedal.instanceId);
-                                            window.blockMenuVisible = false;
+                Rectangle {
+                    visible: window.blockMenuVisible
+                    z: 200
+                    x: 8
+                    y: 48
+                    width: 244
+                    height: 48
+                    radius: 10
+                    color: "#18181C"
+                    border.color: "#34343C"
+                    border.width: 1
+                    Row {
+                        anchors.fill: parent
+                        anchors.margins: 5
+                        spacing: 6
+                        Repeater {
+                            model: ["SAVE AS PRESET", "DELETE BLOCK"]
+                            delegate: Rectangle {
+                                width: 114
+                                height: 38
+                                radius: 19
+                                color: modelData === "DELETE BLOCK" ? "#7F1D1D" : "#27272A"
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: modelData
+                                    color: modelData === "SAVE AS PRESET" ? "#A1A1AA" : "#FFFFFF"
+                                    font.pixelSize: 9
+                                    font.bold: true
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: false
+                                    onClicked: {
+                                        if (modelData === "DELETE BLOCK" && window.selectedPedal) {
+                                            bridge.deleteBlock(window.selectedPedal.instanceId);
                                         }
+                                        window.blockMenuVisible = false;
                                     }
                                 }
                             }
                         }
                     }
+                }
+
+                Column {
+                    anchors.fill: parent
 
                     Item {
                         width: parent.width
@@ -904,58 +923,21 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                             }
 
-                            Row {
-                                spacing: 4
-                                Rectangle {
-                                    width: 38
-                                    height: 38
-                                    radius: 19
-                                    color: "#1C1C20"
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "◀◀"
-                                        color: "#FFFFFF"
-                                        font.pixelSize: 10
-                                    }
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        hoverEnabled: false
-                                        onClicked: bridge.switchSnapshot(Math.max(0, bridge.selectedSnapshot - 1))
-                                    }
+                            Rectangle {
+                                Layout.preferredWidth: 40
+                                Layout.preferredHeight: 40
+                                radius: 8
+                                color: bridge.activeSceneColor
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: window.sceneLetter()
+                                    color: "#0A0A0C"
+                                    font.bold: true
                                 }
-                                Rectangle {
-                                    width: 40
-                                    height: 40
-                                    radius: 8
-                                    color: bridge.activeSceneColor
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: window.sceneLetter()
-                                        color: "#0A0A0C"
-                                        font.bold: true
-                                    }
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        hoverEnabled: false
-                                        onClicked: window.scenePopupVisible = !window.scenePopupVisible
-                                    }
-                                }
-                                Rectangle {
-                                    width: 38
-                                    height: 38
-                                    radius: 19
-                                    color: "#1C1C20"
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "▶▶"
-                                        color: "#FFFFFF"
-                                        font.pixelSize: 10
-                                    }
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        hoverEnabled: false
-                                        onClicked: bridge.switchSnapshot(Math.min(7, bridge.selectedSnapshot + 1))
-                                    }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: false
+                                    onClicked: window.scenePopupVisible = !window.scenePopupVisible
                                 }
                             }
 
@@ -963,7 +945,7 @@ ApplicationWindow {
                                 Layout.preferredWidth: 38
                                 Layout.preferredHeight: 38
                                 radius: 10
-                                color: window.selectedPedal.bypassed ? "#27272A" : "#FF3B5C"
+                                color: window.selectedPedal && !window.selectedPedal.bypassed ? window.categoryColor(window.selectedPedal.category) : "#27272A"
                                 Text {
                                     anchors.centerIn: parent
                                     text: "⏻"
@@ -973,7 +955,11 @@ ApplicationWindow {
                                 MouseArea {
                                     anchors.fill: parent
                                     hoverEnabled: false
-                                    onClicked: bridge.toggleBypass(window.selectedPedal.instanceId)
+                                    onClicked: {
+                                        if (window.selectedPedal && window.selectedPedal.instanceId !== undefined) {
+                                            bridge.toggleBypass(window.selectedPedal.instanceId);
+                                        }
+                                    }
                                 }
                             }
                             Rectangle {
@@ -1687,14 +1673,15 @@ ApplicationWindow {
 
             Rectangle {
                 id: pluginBrowserOverlay
+                parent: window.contentItem
                 anchors.fill: parent
                 visible: window.pluginBrowserVisible
                 z: 145
                 color: "#0A0A0C"
                 Row {
                     anchors.fill: parent
-                    anchors.margins: 12
-                    spacing: 12
+                    anchors.margins: 16
+                    spacing: 16
 
                     Column {
                         width: 190
@@ -1736,24 +1723,26 @@ ApplicationWindow {
                     Column {
                         width: parent.width - 202
                         height: parent.height
-                        Row {
+                        Item {
                             width: parent.width
-                            height: 48
+                            height: 52
                             Text {
+                                anchors.left: parent.left
+                                anchors.verticalCenter: parent.verticalCenter
                                 text: "PLUGIN BROWSER"
                                 color: "#FFFFFF"
                                 font.pixelSize: 18
                                 font.bold: true
                             }
-                            Item {
-                                width: parent.width - 150
-                                height: 1
-                            }
                             Rectangle {
-                                width: 44
-                                height: 44
-                                radius: 22
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 48
+                                height: 48
+                                radius: 24
                                 color: "#1A1A22"
+                                border.color: "#2C2C36"
+                                border.width: 1
                                 Text {
                                     anchors.centerIn: parent
                                     text: "✕"

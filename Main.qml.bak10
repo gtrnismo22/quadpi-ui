@@ -1,0 +1,2460 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+
+ApplicationWindow {
+    id: window
+    width: 800
+    height: 480
+    visible: true
+    title: "PiPedal Quad Cortex"
+    color: "#000000"
+
+    maximumWidth: 800
+    maximumHeight: 480
+    minimumWidth: 800
+    minimumHeight: 480
+
+    property bool presetOverlayVisible: false
+    property bool fileOverlayVisible: false
+    property bool editorVisible: false
+    property bool fitMode: false
+    property bool scenePopupVisible: false
+    property string mainMode: "PRESET"
+    property bool gigViewVisible: false
+    property string gigMode: "PRESET"
+    property int swapSceneIndex: -1
+    property int copySceneIndex: -1
+    property bool sceneEditVisible: false
+    property bool blockMenuVisible: false
+    property bool pluginBrowserVisible: false
+    property bool bankPresetOverlayVisible: false
+    property bool deviceMenuVisible: false
+    property bool confirmReboot: false
+    property bool confirmShutdown: false
+    property bool keyboardOpen: false
+    property string pluginSearchText: ""
+    property int pluginInsertionIndex: 0
+    property string pluginCategory: "ALL"
+    property int editSceneIndex: -1
+    property string editSceneName: ""
+    property string editSceneColor: "#22C55E"
+    property int editorParamPage: 0
+    property string fileRelativePath: ""
+    property bool settingsModalVisible: false
+    property int settingsConfirmState: 0  // 0=idle, 1=confirm reboot, 2=confirm shutdown
+    readonly property int paramsPerPage: 10
+    readonly property var selectedPedal: bridge ? bridge.selectedPedal : ({})
+    readonly property var selectedFileProperties: selectedPedal.fileProperties || []
+    readonly property var currentControls: selectedPedal.controls || []
+    readonly property int totalParamPages: Math.max(1, Math.ceil(currentControls.length / paramsPerPage))
+
+    function categoryColor(category) {
+        if (category === "Amp")
+            return "#FF3B5C";
+        if (category === "Cab")
+            return "#F97316";
+        if (category === "Drive")
+            return "#FACC15";
+        if (category === "Modulation")
+            return "#00E5FF";
+        if (category === "Delay")
+            return "#10B981";
+        if (category === "Reverb")
+            return "#A855F7";
+        return "#94A3B8";
+    }
+
+    function categoryIcon(category) {
+        if (category === "Amp")
+            return "AMP";
+        if (category === "Cab")
+            return "CAB";
+        if (category === "Drive")
+            return "DRV";
+        if (category === "Modulation")
+            return "MOD";
+        if (category === "Delay")
+            return "DLY";
+        if (category === "Reverb")
+            return "REV";
+        return "EQ";
+    }
+
+    function laneModel(lane) {
+        var result = [];
+        for (var i = 0; i < 8; ++i)
+            result.push((lane && i < lane.length) ? lane[i] : null);
+        return result;
+    }
+
+    function presetIndexText() {
+        if (!bridge.presetsList || bridge.presetsList.length === 0)
+            return "1";
+        for (var i = 0; i < bridge.presetsList.length; ++i) {
+            if (bridge.presetsList[i].id === bridge.activePresetId)
+                return "" + (i + 1);
+        }
+        return "1";
+    }
+
+    function sceneLetter() {
+        return bridge.activeSceneLetter || "A";
+    }
+
+    Item {
+        anchors.fill: parent
+
+        Rectangle {
+            id: topHeader
+            anchors.top: parent.top
+            width: parent.width
+            height: 64
+            color: "#000000"
+            border.width: 0
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 10
+                anchors.rightMargin: 8
+                spacing: 8
+
+                Item {
+                    Layout.preferredWidth: 330
+                    Layout.fillHeight: true
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: false
+                        onClicked: window.bankPresetOverlayVisible = true
+                    }
+                    Row {
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 12
+
+                        Row {
+                            id: presetSceneUnit
+                            spacing: 1
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Text {
+                                text: window.presetIndexText()
+                                color: "#FFFFFF"
+                                font.pixelSize: 32
+                                font.bold: true
+                            }
+                            Text {
+                                text: window.sceneLetter()
+                                color: bridge.activeSceneColor
+                                font.pixelSize: 32
+                                font.bold: true
+                            }
+                        }
+                        Text {
+                            id: presetNameText
+                            text: bridge.activePresetName
+                            color: "#FFFFFF"
+                            font.pixelSize: 28
+                            font.bold: true
+                            elide: Text.ElideRight
+                            width: 260
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                }
+
+                Item {
+                    Layout.fillWidth: true
+                }
+
+                Item {
+                    Layout.preferredWidth: 64
+                    Layout.preferredHeight: 38
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 19
+                        color: "#161619"
+                        border.color: "#2E2E34"
+                        border.width: 1
+                        Text {
+                            anchors.centerIn: parent
+                            text: "REVERT"
+                            color: "#FFFFFF"
+                            font.pixelSize: 8
+                            font.bold: true
+                        }
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: false
+                        onClicked: bridge.revertActivePreset()
+                    }
+                }
+
+                Item {
+                    Layout.preferredWidth: 38
+                    Layout.preferredHeight: 38
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 8
+                        color: bridge.activeSceneColor
+                        Text {
+                            anchors.centerIn: parent
+                            text: window.sceneLetter()
+                            color: "#0A0A0C"
+                            font.bold: true
+                            font.pixelSize: 18
+                        }
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: false
+                        onClicked: window.scenePopupVisible = !window.scenePopupVisible
+                    }
+                }
+
+                Item {
+                    Layout.preferredWidth: 38
+                    Layout.preferredHeight: 38
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 19
+                        color: bridge.presetChanged ? "#FACC15" : "#161619"
+                        border.color: bridge.presetChanged ? "#FACC15" : "#2E2E34"
+                        border.width: 1
+                        Text {
+                            anchors.centerIn: parent
+                            text: "SAVE"
+                            color: bridge.presetChanged ? "#000000" : "#FFFFFF"
+                            font.pixelSize: 8
+                            font.bold: true
+                        }
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: false
+                        onClicked: bridge.saveCurrentPreset()
+                    }
+                }
+
+                Item {
+                    Layout.preferredWidth: 52
+                    Layout.preferredHeight: 38
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 19
+                        color: window.fitMode ? "#10B981" : "#17171A"
+                        Text {
+                            anchors.centerIn: parent
+                            text: "FIT"
+                            color: window.fitMode ? "#000000" : "#FFFFFF"
+                            font.pixelSize: 10
+                            font.bold: true
+                        }
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: false
+                        onClicked: window.fitMode = !window.fitMode
+                    }
+                }
+
+                Item {
+                    Layout.preferredWidth: 76
+                    Layout.preferredHeight: 38
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 19
+                        color: "#161619"
+                        border.color: "#3F3F46"
+                        border.width: 1
+                        Text {
+                            anchors.centerIn: parent
+                            text: "GIG VIEW"
+                            color: "#FFFFFF"
+                            font.pixelSize: 9
+                            font.bold: true
+                        }
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: false
+                        onClicked: window.gigViewVisible = true
+                    }
+                }
+
+                Text {
+                    text: "⋮"
+                    color: "#FFFFFF"
+                    font.pixelSize: 24
+                    Layout.preferredWidth: 28
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: false
+                        onClicked: window.settingsModalVisible = true
+                    }
+                }
+            }
+
+            Rectangle {
+                id: scenePopup
+                visible: window.scenePopupVisible
+                z: 200
+                width: 390
+                height: 62
+                radius: 10
+                anchors.right: parent.right
+                anchors.rightMargin: 170
+                anchors.top: parent.bottom
+                color: "#121215"
+                border.color: "#2E2E34"
+                border.width: 1
+
+                Row {
+                    anchors.fill: parent
+                    anchors.margins: 6
+                    spacing: 6
+
+                    Repeater {
+                        model: bridge ? bridge.scenes : []
+                        delegate: Rectangle {
+                            width: 58
+                            height: 50
+                            radius: 8
+                            color: modelData.color
+                            Text {
+                                anchors.centerIn: parent
+                                text: modelData.letter + "\n" + modelData.name
+                                color: "#0A0A0C"
+                                font.pixelSize: 8
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: false
+                                onClicked: {
+                                    bridge.switchScene(modelData.index);
+                                    window.scenePopupVisible = false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            id: gridArea
+            anchors.top: topHeader.bottom
+            width: parent.width
+            height: 416
+            color: "#000000"
+
+            Flickable {
+                id: signalFlick
+                anchors.fill: parent
+                visible: window.mainMode === "PRESET"
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                readonly property real fitScale: window.fitMode ? Math.min(signalFlick.width / Math.max(1, signalCanvas.treeWidth), signalFlick.height / Math.max(1, signalCanvas.treeHeight), 1.0) : 1.0
+                interactive: !window.fitMode && (signalCanvas.treeWidth > signalFlick.width || signalCanvas.treeHeight > signalFlick.height)
+                contentWidth: signalCanvas.treeWidth * signalFlick.fitScale
+                contentHeight: signalCanvas.treeHeight * signalFlick.fitScale
+
+                Item {
+                    id: signalCanvas
+                    readonly property real treeWidth: bridge ? bridge.signalCanvasWidth : 800
+                    readonly property real treeHeight: bridge ? bridge.signalCanvasHeight : 416
+                    width: treeWidth
+                    height: treeHeight
+                    x: window.fitMode ? Math.max(0, (signalFlick.width - treeWidth * signalFlick.fitScale) / 2) : 0
+                    y: window.fitMode ? Math.max(0, (signalFlick.height - treeHeight * signalFlick.fitScale) / 2) : 0
+                    scale: signalFlick.fitScale
+                    transformOrigin: Item.TopLeft
+
+                    property string insertionChainId: "main"
+
+                    function moveBlock(instanceId, targetChainId, targetIndex) {
+                        if (!bridge)
+                            return;
+                        bridge.dropBlock(instanceId, targetChainId === undefined ? "main" : targetChainId, targetIndex === undefined ? 0 : targetIndex);
+                    }
+
+                    Item {
+                        id: treeContainer
+                        anchors.fill: parent
+
+                        Connections {
+                            target: bridge
+                            function onSignalTreeChanged() {
+                                wireCanvas.requestPaint();
+                            }
+                        }
+
+                        Canvas {
+                            id: wireCanvas
+                            anchors.fill: parent
+                            z: 1
+                            onPaint: {
+                                var ctx = getContext("2d");
+                                ctx.reset();
+                                ctx.lineWidth = 2;
+                                ctx.lineCap = "round";
+                                ctx.lineJoin = "round";
+                                var wires = bridge ? bridge.signalWires : [];
+                                for (var i = 0; i < wires.length; ++i) {
+                                    var points = wires[i].points || [];
+                                    if (points.length < 2)
+                                        continue;
+                                    ctx.strokeStyle = wires[i].active ? "#E4E4E7" : "#3F3F46";
+                                    ctx.beginPath();
+                                    ctx.moveTo(points[0].x, points[0].y);
+                                    for (var j = 1; j < points.length - 1; ++j) {
+                                        ctx.arcTo(points[j].x, points[j].y, points[j + 1].x, points[j + 1].y, 8);
+                                    }
+                                    var last = points[points.length - 1];
+                                    ctx.lineTo(last.x, last.y);
+                                    ctx.stroke();
+                                }
+                            }
+                        }
+
+                        Repeater {
+                            model: bridge ? bridge.signalNodes : []
+                            delegate: Item {
+                                id: nodeRoot
+                                x: modelData.x
+                                y: modelData.y
+                                width: modelData.width
+                                height: modelData.height
+                                z: 2
+                                property bool lifting: false
+                                property bool isEffect: modelData.kind === "effect"
+
+                                Rectangle {
+                                    anchors.fill: parent
+                                    visible: nodeRoot.isEffect
+                                    radius: 12
+                                    color: "#0C0C0F"
+                                    border.width: 2
+                                    border.color: modelData.bypassed ? "#27272A" : (modelData.color || "#26262E")
+                                    opacity: nodeRoot.lifting ? 0.35 : (modelData.active ? 1.0 : 0.55)
+
+                                    Column {
+                                        anchors.centerIn: parent
+                                        spacing: 4
+
+                                        Canvas {
+                                            width: 24
+                                            height: 24
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            onPaint: {
+                                                var ctx = getContext("2d");
+                                                ctx.reset();
+                                                ctx.strokeStyle = modelData.bypassed ? "#27272A" : modelData.color;
+                                                ctx.fillStyle = modelData.bypassed ? "#27272A" : modelData.color;
+                                                ctx.lineWidth = 2;
+                                                ctx.beginPath();
+                                                if (modelData.category === "Amp") {
+                                                    ctx.rect(3, 4, 18, 14);
+                                                    ctx.stroke();
+                                                    ctx.beginPath();
+                                                    ctx.arc(12, 11, 4, 0, 6.283);
+                                                    ctx.stroke();
+                                                } else if (modelData.category === "Cab") {
+                                                    ctx.beginPath();
+                                                    ctx.arc(12, 12, 8, 0, 6.283);
+                                                    ctx.stroke();
+                                                    ctx.beginPath();
+                                                    ctx.arc(12, 12, 3, 0, 6.283);
+                                                    ctx.fill();
+                                                } else if (modelData.category === "Drive") {
+                                                    ctx.rect(3, 7, 18, 12);
+                                                    ctx.stroke();
+                                                    ctx.beginPath();
+                                                    ctx.moveTo(7, 7);
+                                                    ctx.lineTo(17, 19);
+                                                    ctx.stroke();
+                                                } else if (modelData.category === "Delay" || modelData.category === "Reverb") {
+                                                    ctx.beginPath();
+                                                    ctx.arc(12, 12, 8, 0.7, 5.58);
+                                                    ctx.stroke();
+                                                    ctx.beginPath();
+                                                    ctx.arc(12, 12, 4, 0.7, 5.58);
+                                                    ctx.stroke();
+                                                } else {
+                                                    ctx.beginPath();
+                                                    ctx.moveTo(2, 14);
+                                                    ctx.bezierCurveTo(6, 4, 10, 20, 14, 10);
+                                                    ctx.bezierCurveTo(17, 5, 20, 15, 22, 8);
+                                                    ctx.stroke();
+                                                }
+                                            }
+                                        }
+
+                                        Text {
+                                            width: 60
+                                            text: modelData.label
+                                            color: modelData.active ? "#FFFFFF" : "#777783"
+                                            font.pixelSize: 10
+                                            font.bold: true
+                                            horizontalAlignment: Text.AlignHCenter
+                                            elide: Text.ElideRight
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                        }
+                                    }
+                                }
+
+                                Rectangle {
+                                    anchors.fill: parent
+                                    visible: modelData.kind === "split"
+                                    radius: 21
+                                    color: "#121216"
+                                    border.width: 2
+                                    border.color: "#94A3B8"
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: modelData.label
+                                        color: "#FFFFFF"
+                                        font.pixelSize: 13
+                                        font.bold: true
+                                    }
+                                }
+
+                                Rectangle {
+                                    anchors.fill: parent
+                                    visible: modelData.kind === "capsule"
+                                    radius: 12
+                                    color: "#101014"
+                                    border.width: 2
+                                    border.color: "#E4E4E7"
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: modelData.label
+                                        color: "#FFFFFF"
+                                        font.pixelSize: 13
+                                        font.bold: true
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: addSlotMouse
+                                    anchors.fill: parent
+                                    enabled: modelData.kind === "addSlot"
+                                    hoverEnabled: false
+                                    onClicked: {
+                                        window.pluginInsertionIndex = modelData.index !== undefined ? modelData.index : 0;
+                                        signalCanvas.insertionChainId = modelData.chainId !== undefined ? modelData.chainId : "main";
+                                        window.pluginBrowserVisible = true;
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: effectMouse
+                                    anchors.fill: parent
+                                    enabled: modelData.kind === "effect" || modelData.kind === "split"
+                                    hoverEnabled: false
+                                    preventStealing: nodeRoot.lifting || dragged
+                                    property real pressX: 0
+                                    property real pressY: 0
+                                    property bool dragged: false
+                                    property int draggingInstanceId: -1
+
+                                    Timer {
+                                        id: blockHoldTimer
+                                        interval: 75
+                                        repeat: false
+                                        onTriggered: effectMouse.beginLift()
+                                    }
+
+                                    function beginLift() {
+                                        if (modelData.kind !== "effect" && modelData.kind !== "split")
+                                            return;
+                                        nodeRoot.lifting = true;
+                                        dragged = true;
+                                        draggingInstanceId = modelData.instanceId;
+                                        signalFlick.interactive = false;
+                                        var centre = mapToItem(treeContainer, width / 2, height / 2);
+                                        dragGhost.width = modelData.width;
+                                        dragGhost.height = modelData.height;
+                                        dragGhost.label = modelData.label;
+                                        dragGhost.x = centre.x - dragGhost.width / 2;
+                                        dragGhost.y = centre.y - dragGhost.height / 2;
+                                        dragGhost.visible = true;
+                                    }
+
+                                    function endBlockDrag() {
+                                        blockHoldTimer.stop();
+                                        nodeRoot.lifting = false;
+                                        dragged = false;
+                                        draggingInstanceId = -1;
+                                        dragGhost.visible = false;
+                                        signalFlick.interactive = true;
+                                    }
+
+                                    onCanceled: function () {
+                                        endBlockDrag();
+                                    }
+
+                                    onPressed: function (mouse) {
+                                        if (modelData.kind === "effect" || modelData.kind === "split") {
+                                            pressX = mouse.x;
+                                            pressY = mouse.y;
+                                            dragged = false;
+                                            blockHoldTimer.start();
+                                        }
+                                    }
+
+                                    onPositionChanged: function (mouse) {
+                                        if (!nodeRoot.lifting) {
+                                            var dx = mouse.x - pressX;
+                                            var dy = mouse.y - pressY;
+                                            if (dx * dx + dy * dy > 64)
+                                                blockHoldTimer.stop();
+                                            return;
+                                        }
+                                        var point = mapToItem(treeContainer, mouse.x, mouse.y);
+                                        dragGhost.x = point.x - dragGhost.width / 2;
+                                        dragGhost.y = point.y - dragGhost.height / 2;
+                                    }
+
+                                    onReleased: function (mouse) {
+                                        blockHoldTimer.stop();
+                                        var wasLifting = nodeRoot.lifting;
+                                        var releasedId = draggingInstanceId;
+                                        var dropCenterX = dragGhost.x + dragGhost.width / 2;
+                                        var dropCenterY = dragGhost.y + dragGhost.height / 2;
+                                        endBlockDrag();
+                                        if (!wasLifting) {
+                                            if (modelData.instanceId >= 0) {
+                                                bridge.selectPedalByInstance(modelData.instanceId);
+                                                window.editorVisible = true;
+                                            }
+                                            return;
+                                        }
+                                        if (releasedId < 0)
+                                            return;
+                                        var pt = signalCanvas.mapFromItem(treeContainer, dropCenterX, dropCenterY);
+                                        var targetNode = null;
+                                        var minDistance = 115;
+                                        var targetNodes = bridge ? bridge.signalNodes : [];
+                                        for (var i = 0; i < targetNodes.length; ++i) {
+                                            var node = targetNodes[i];
+                                            if (node.kind !== "effect" && node.kind !== "split" && node.kind !== "addSlot")
+                                                continue;
+                                            if (node.instanceId === releasedId)
+                                                continue;
+                                            var clampedX = Math.max(node.x, Math.min(pt.x, node.x + node.width));
+                                            var clampedY = Math.max(node.y, Math.min(pt.y, node.y + node.height));
+                                            var distance = Math.hypot(pt.x - clampedX, pt.y - clampedY);
+                                            if (distance < minDistance) {
+                                                minDistance = distance;
+                                                targetNode = node;
+                                            }
+                                        }
+                                        if (targetNode) {
+                                            var targetIndex = ((targetNode.kind === "effect" || targetNode.kind === "split") && pt.x > targetNode.x + targetNode.width / 2) ? (targetNode.index + 1) : targetNode.index;
+                                            bridge.dropBlock(releasedId, String(targetNode.chainId), targetIndex);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            id: dragGhost
+                            visible: false
+                            z: 100
+                            width: 68
+                            height: 68
+                            radius: 12
+                            color: "#141419"
+                            border.width: 2
+                            border.color: "#E4E4E7"
+                            opacity: 0.9
+                            property string label: ""
+                            Text {
+                                anchors.centerIn: parent
+                                width: 60
+                                text: dragGhost.label
+                                color: "#FFFFFF"
+                                font.pixelSize: 10
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
+                            }
+                        }
+                    }
+                }
+
+                Grid {
+                    id: scenesGrid
+                    visible: window.mainMode === "SCENES"
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    columns: 3
+                    rows: 2
+                    columnSpacing: 10
+                    rowSpacing: 10
+
+                    Repeater {
+                        model: bridge ? bridge.scenes : []
+                        delegate: Rectangle {
+                            width: 245
+                            height: 185
+                            radius: 14
+                            color: modelData.index === bridge.selectedSnapshot ? "#1A1A20" : "#121216"
+                            border.width: 3
+                            border.color: modelData.color
+
+                            Rectangle {
+                                anchors.top: parent.top
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                height: 4
+                                radius: 2
+                                color: modelData.color
+                            }
+
+                            Rectangle {
+                                width: 40
+                                height: 40
+                                radius: 8
+                                x: 14
+                                y: 14
+                                color: modelData.color
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: modelData.letter
+                                    color: "#0A0A0C"
+                                    font.pixelSize: 18
+                                    font.bold: true
+                                }
+                            }
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: modelData.name || ("Scene " + modelData.letter)
+                                color: "#FFFFFF"
+                                font.pixelSize: 22
+                                font.bold: true
+                                elide: Text.ElideRight
+                                horizontalAlignment: Text.AlignHCenter
+                                width: parent.width - 32
+                            }
+
+                            Rectangle {
+                                width: 56
+                                height: 34
+                                radius: 17
+                                anchors.right: parent.right
+                                anchors.rightMargin: 12
+                                anchors.bottom: parent.bottom
+                                anchors.bottomMargin: 12
+                                color: "#27272A"
+                                border.color: modelData.color
+                                border.width: 1
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "SAVE"
+                                    color: "#FFFFFF"
+                                    font.pixelSize: 9
+                                    font.bold: true
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: false
+                                    onClicked: bridge.saveScene(modelData.index)
+                                }
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                anchors.rightMargin: 72
+                                anchors.bottomMargin: 50
+                                hoverEnabled: false
+                                onClicked: bridge.switchScene(modelData.index)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                id: editorDrawer
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 246
+                visible: window.editorVisible
+                z: 50
+                color: "#121215"
+                border.color: "#2E2E34"
+                border.width: 1
+
+                Column {
+                    anchors.fill: parent
+
+                    Rectangle {
+                        visible: window.blockMenuVisible
+                        z: 60
+                        x: 8
+                        y: 42
+                        width: 330
+                        height: 48
+                        radius: 8
+                        color: "#18181C"
+                        border.color: "#34343C"
+                        border.width: 1
+                        Row {
+                            anchors.fill: parent
+                            anchors.margins: 5
+                            spacing: 6
+                            Repeater {
+                                model: ["MOVE LEFT", "MOVE RIGHT", "DELETE BLOCK"]
+                                delegate: Rectangle {
+                                    width: modelData === "DELETE BLOCK" ? 110 : 100
+                                    height: 38
+                                    radius: 19
+                                    color: modelData === "DELETE BLOCK" ? "#7F1D1D" : "#27272A"
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: modelData
+                                        color: "#FFFFFF"
+                                        font.pixelSize: 9
+                                        font.bold: true
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        hoverEnabled: false
+                                        onClicked: {
+                                            if (modelData === "MOVE LEFT")
+                                                bridge.moveBlock(window.selectedPedal.instanceId, -1);
+                                            else if (modelData === "MOVE RIGHT")
+                                                bridge.moveBlock(window.selectedPedal.instanceId, 1);
+                                            else
+                                                bridge.deleteBlock(window.selectedPedal.instanceId);
+                                            window.blockMenuVisible = false;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Item {
+                        width: parent.width
+                        height: 46
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
+
+                            Rectangle {
+                                Layout.preferredWidth: 38
+                                Layout.preferredHeight: 38
+                                radius: 8
+                                color: "#1C1C1F"
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "⋮"
+                                    color: "#FFFFFF"
+                                    font.pixelSize: 20
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: false
+                                    onClicked: window.blockMenuVisible = !window.blockMenuVisible
+                                }
+                            }
+
+                            Column {
+                                Layout.preferredWidth: 230
+                                Text {
+                                    text: window.selectedPedal.category ? window.selectedPedal.category.toUpperCase() : ""
+                                    color: "#8E8E9F"
+                                    font.pixelSize: 10
+                                    font.bold: true
+                                }
+                                Text {
+                                    text: window.selectedPedal.category === "SIGNAL SPLITTER" ? ("Signal Split / " + (window.selectedPedal.splitMode || "A/B")) : (window.selectedPedal.name || "")
+                                    color: window.categoryColor(window.selectedPedal.category)
+                                    font.pixelSize: 15
+                                    font.bold: true
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.preferredWidth: 82
+                                Layout.preferredHeight: 32
+                                radius: 16
+                                visible: window.selectedFileProperties.length > 0
+                                color: "#1C1C20"
+                                border.color: "#3F3F46"
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "LOAD FILE"
+                                    color: "#FFFFFF"
+                                    font.pixelSize: 9
+                                    font.bold: true
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: false
+                                    onClicked: {
+                                        window.fileRelativePath = "";
+                                        window.fileOverlayVisible = true;
+                                        if (window.selectedFileProperties.length)
+                                            bridge.requestFileList(window.selectedPedal.instanceId, window.selectedFileProperties[0].patchProperty, window.selectedFileProperties[0], "");
+                                    }
+                                }
+                            }
+
+                            Item {
+                                Layout.fillWidth: true
+                            }
+
+                            Row {
+                                spacing: 4
+                                Rectangle {
+                                    width: 38
+                                    height: 38
+                                    radius: 19
+                                    color: "#1C1C20"
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "◀◀"
+                                        color: "#FFFFFF"
+                                        font.pixelSize: 10
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        hoverEnabled: false
+                                        onClicked: bridge.switchSnapshot(Math.max(0, bridge.selectedSnapshot - 1))
+                                    }
+                                }
+                                Rectangle {
+                                    width: 40
+                                    height: 40
+                                    radius: 8
+                                    color: bridge.activeSceneColor
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: window.sceneLetter()
+                                        color: "#0A0A0C"
+                                        font.bold: true
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        hoverEnabled: false
+                                        onClicked: window.scenePopupVisible = !window.scenePopupVisible
+                                    }
+                                }
+                                Rectangle {
+                                    width: 38
+                                    height: 38
+                                    radius: 19
+                                    color: "#1C1C20"
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "▶▶"
+                                        color: "#FFFFFF"
+                                        font.pixelSize: 10
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        hoverEnabled: false
+                                        onClicked: bridge.switchSnapshot(Math.min(7, bridge.selectedSnapshot + 1))
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.preferredWidth: 38
+                                Layout.preferredHeight: 38
+                                radius: 10
+                                color: window.selectedPedal && (window.selectedPedal.enabled !== false && window.selectedPedal.active !== false) ? window.categoryColor(window.selectedPedal.category) : "#27272A"
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "⏻"
+                                    color: "#FFFFFF"
+                                    font.pixelSize: 17
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: false
+                                    onClicked: {
+                                        if (window.selectedPedal && window.selectedPedal.instanceId !== undefined) {
+                                            bridge.toggleBypass(window.selectedPedal.instanceId);
+                                        }
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                Layout.preferredWidth: 38
+                                Layout.preferredHeight: 38
+                                radius: 19
+                                color: "#1C1C20"
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "✓"
+                                    color: "#10B981"
+                                    font.pixelSize: 18
+                                    font.bold: true
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: false
+                                    onClicked: window.editorVisible = false
+                                }
+                            }
+                        }
+                    }
+
+                    Item {
+                        width: parent.width
+                        height: 200
+
+                        Column {
+                            anchors.fill: parent
+                            anchors.leftMargin: 6
+                            anchors.rightMargin: 6
+                            anchors.topMargin: 2
+                            anchors.bottomMargin: 6
+                            spacing: 6
+
+                            Repeater {
+                                model: 2
+                                delegate: Rectangle {
+                                    width: parent.width
+                                    height: 92
+                                    radius: 8
+                                    color: "#1C1C1F"
+
+                                    Row {
+                                        anchors.fill: parent
+                                        Repeater {
+                                            model: 5
+                                            delegate: Rectangle {
+                                                width: 157.6
+                                                height: parent.height
+                                                color: "transparent"
+                                                border.width: index > 0 ? 1 : 0
+                                                border.color: "#2E2E34"
+
+                                                readonly property var ctrlIndex: window.editorParamPage * 10 + (rowIndex * 5) + (index !== undefined ? index : 0)
+                                                readonly property var ctrl: ctrlIndex < window.currentControls.length ? window.currentControls[ctrlIndex] : null
+                                                readonly property int rowIndex: (typeof modelIndex !== "undefined" && modelIndex !== undefined) ? modelIndex : 0
+
+                                                Text {
+                                                    x: 8
+                                                    y: 7
+                                                    width: 74
+                                                    text: ctrl ? ((ctrl.name && ctrl.name.length) ? ctrl.name : ctrl.symbol).toUpperCase() : ""
+                                                    color: "#A1A1AA"
+                                                    font.pixelSize: 10
+                                                    font.bold: true
+                                                    elide: Text.ElideRight
+                                                }
+
+                                                Text {
+                                                    x: 8
+                                                    y: 48
+                                                    text: ctrl ? (ctrl.isInteger ? Math.round(ctrl.value) : ctrl.value.toFixed(1)) : ""
+                                                    color: "#FFFFFF"
+                                                    font.pixelSize: 12
+                                                    font.bold: true
+                                                }
+                                                Text {
+                                                    x: 8
+                                                    y: 66
+                                                    text: ctrl && ctrl.unit && ctrl.unit.toLowerCase() !== "none" ? ctrl.unit : ""
+                                                    color: "#777783"
+                                                    font.pixelSize: 9
+                                                }
+
+                                                RotaryDial {
+                                                    x: 96
+                                                    y: 6
+                                                    width: 48
+                                                    height: 48
+                                                    visible: ctrl && !ctrl.isToggle && !ctrl.isEnum
+                                                    value: ctrl ? ctrl.value : 0
+                                                    minimumValue: ctrl ? ctrl.min : 0
+                                                    maximumValue: ctrl ? ctrl.max : 1
+                                                    defaultValue: ctrl ? ctrl.default : 0.5
+                                                    isInteger: ctrl ? ctrl.isInteger : false
+                                                    unit: ctrl ? ctrl.unit : ""
+                                                    label: ""
+                                                    compact: true
+                                                    accentColor: window.categoryColor(window.selectedPedal ? window.selectedPedal.category : "")
+                                                    instanceId: (window.selectedPedal && window.selectedPedal.instanceId !== undefined) ? window.selectedPedal.instanceId : -1
+                                                    symbol: ctrl ? ctrl.symbol : ""
+                                                    onValueModified: function (v) {
+                                                        if (ctrl && window.selectedPedal && window.selectedPedal.instanceId !== undefined)
+                                                            bridge.setParameter(window.selectedPedal.instanceId, ctrl.symbol, v);
+                                                    }
+                                                }
+
+                                                Rectangle {
+                                                    x: 88
+                                                    y: 24
+                                                    width: 62
+                                                    height: 44
+                                                    radius: 22
+                                                    visible: ctrl && (ctrl.isToggle || ctrl.isEnum)
+                                                    color: ctrl && ctrl.isToggle && ctrl.value >= 0.5 ? window.categoryColor(window.selectedPedal ? window.selectedPedal.category : "") : "#27272A"
+                                                    Text {
+                                                        anchors.centerIn: parent
+                                                        text: ctrl && ctrl.scalePoints && ctrl.scalePoints.length ? ctrl.scalePoints[Math.min(ctrl.scalePoints.length - 1, Math.max(0, Math.round(ctrl.value)))].label : "ON"
+                                                        color: "#FFFFFF"
+                                                        font.pixelSize: 9
+                                                        font.bold: true
+                                                        elide: Text.ElideRight
+                                                        width: parent.width - 8
+                                                        horizontalAlignment: Text.AlignHCenter
+                                                    }
+                                                    MouseArea {
+                                                        anchors.fill: parent
+                                                        hoverEnabled: false
+                                                        onClicked: {
+                                                            if (ctrl && window.selectedPedal && window.selectedPedal.instanceId !== undefined) {
+                                                                if (ctrl.isToggle)
+                                                                    bridge.setParameter(window.selectedPedal.instanceId, ctrl.symbol, ctrl.value >= 0.5 ? ctrl.min : ctrl.max);
+                                                                else if (ctrl.scalePoints && ctrl.scalePoints.length)
+                                                                    bridge.setParameter(window.selectedPedal.instanceId, ctrl.symbol, ctrl.scalePoints[(ctrl.scalePoints.findIndex(function (p) {
+                                                                                return Math.abs(p.value - ctrl.value) < 0.01;
+                                                                            }) + 1) % ctrl.scalePoints.length].value);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    property int modelIndex: (typeof index !== "undefined" && index !== undefined) ? index : 0
+                                }
+                            }
+
+                            Row {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                visible: window.totalParamPages > 1
+                                spacing: 12
+                                height: 30
+                                Rectangle {
+                                    width: 48
+                                    height: 30
+                                    radius: 15
+                                    color: "#27272A"
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "<"
+                                        color: "#FFFFFF"
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        hoverEnabled: false
+                                        onClicked: window.editorParamPage = Math.max(0, window.editorParamPage - 1)
+                                    }
+                                }
+                                Rectangle {
+                                    width: 48
+                                    height: 30
+                                    radius: 15
+                                    color: "#27272A"
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: ">"
+                                        color: "#FFFFFF"
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        hoverEnabled: false
+                                        onClicked: window.editorParamPage = Math.min(window.totalParamPages - 1, window.editorParamPage + 1)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                id: fileOverlay
+                anchors.fill: parent
+                visible: window.fileOverlayVisible
+                z: 110
+                color: "#0A0A0C"
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 8
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 48
+                        Item {
+                            Layout.preferredWidth: 110
+                            Layout.preferredHeight: 48
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: 24
+                                color: "#1A1A22"
+                                border.color: "#323240"
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "← BACK"
+                                    color: "#FFFFFF"
+                                    font.pixelSize: 12
+                                    font.bold: true
+                                }
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: false
+                                onClicked: {
+                                    if (window.fileRelativePath === "") {
+                                        window.fileOverlayVisible = false;
+                                    } else {
+                                        var parts = window.fileRelativePath.split("/");
+                                        parts.pop();
+                                        window.fileRelativePath = parts.join("/");
+                                        bridge.requestFileList(window.selectedPedal.instanceId, window.selectedFileProperties[0].patchProperty, window.selectedFileProperties[0], window.fileRelativePath);
+                                    }
+                                }
+                            }
+                        }
+                        Item {
+                            Layout.fillWidth: true
+                        }
+                        Text {
+                            text: window.selectedFileProperties.length ? window.selectedFileProperties[0].label.toUpperCase() : "SELECT FILE"
+                            color: "#FFFFFF"
+                            font.pixelSize: 16
+                            font.bold: true
+                        }
+                        Item {
+                            Layout.fillWidth: true
+                        }
+                        Item {
+                            Layout.preferredWidth: 48
+                            Layout.preferredHeight: 48
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: 24
+                                color: "#1A1A22"
+                                border.color: "#323240"
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "✕"
+                                    color: "#FFFFFF"
+                                    font.pixelSize: 18
+                                }
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: false
+                                onClicked: window.fileOverlayVisible = false
+                            }
+                        }
+                    }
+
+                    ListView {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        clip: true
+                        model: bridge ? bridge.fileOptions : []
+                        spacing: 6
+                        delegate: Item {
+                            width: parent.width
+                            height: 54
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: 8
+                                color: fileTouch.pressed ? "#22222E" : "#141418"
+                                border.color: "#26262E"
+                                Text {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 16
+                                    text: modelData.name
+                                    color: "#FFFFFF"
+                                    font.pixelSize: 15
+                                    font.bold: true
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+                            MouseArea {
+                                id: fileTouch
+                                anchors.fill: parent
+                                hoverEnabled: false
+                                onClicked: {
+                                    if (modelData.isDirectory) {
+                                        window.fileRelativePath = modelData.path;
+                                        bridge.requestFileList(window.selectedPedal.instanceId, window.selectedFileProperties[0].patchProperty, window.selectedFileProperties[0], window.fileRelativePath);
+                                    } else if (modelData.path !== "") {
+                                        bridge.setFileProperty(window.selectedPedal.instanceId, window.selectedFileProperties[0].patchProperty, modelData.path);
+                                        window.fileOverlayVisible = false;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                id: gigViewOverlay
+                parent: window.contentItem
+                anchors.fill: parent
+                visible: window.gigViewVisible
+                z: 140
+                color: "#08080A"
+
+                Column {
+                    anchors.fill: parent
+                    anchors.margins: 0
+
+                    Rectangle {
+                        width: parent.width
+                        height: 64
+                        color: "#000000"
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 8
+                            spacing: 8
+
+                            Item {
+                                Layout.preferredWidth: 330
+                                Layout.fillHeight: true
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: false
+                                    onClicked: window.bankPresetOverlayVisible = true
+                                }
+                                Row {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 12
+
+                                    Row {
+                                        id: gigView_presetSceneUnit
+                                        spacing: 1
+                                        anchors.verticalCenter: parent.verticalCenter
+
+                                        Text {
+                                            text: window.presetIndexText()
+                                            color: "#FFFFFF"
+                                            font.pixelSize: 32
+                                            font.bold: true
+                                        }
+                                        Text {
+                                            text: window.sceneLetter()
+                                            color: bridge.activeSceneColor
+                                            font.pixelSize: 32
+                                            font.bold: true
+                                        }
+                                    }
+                                    Text {
+                                        id: gigView_presetNameText
+                                        text: bridge.activePresetName
+                                        color: "#FFFFFF"
+                                        font.pixelSize: 28
+                                        font.bold: true
+                                        elide: Text.ElideRight
+                                        width: 260
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+                                }
+                            }
+
+                            Item {
+                                Layout.fillWidth: true
+                            }
+
+                            Rectangle {
+                                Layout.preferredWidth: 180
+                                Layout.preferredHeight: 38
+                                radius: 19
+                                color: "#17171A"
+                                Row {
+                                    anchors.fill: parent
+                                    Repeater {
+                                        model: ["PRESET", "SCENE"]
+                                        delegate: Item {
+                                            width: parent.width / 2
+                                            height: parent.height
+                                            Rectangle {
+                                                anchors.fill: parent
+                                                radius: 19
+                                                color: ((modelData === "PRESET" && window.gigMode === "PRESET") || (modelData === "SCENE" && window.gigMode === "SCENE")) ? "#25252A" : "transparent"
+                                            }
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: modelData
+                                                color: "#FFFFFF"
+                                                font.pixelSize: 10
+                                                font.bold: true
+                                            }
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                hoverEnabled: false
+                                                onClicked: window.gigMode = modelData === "SCENE" ? "SCENE" : "PRESET"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.preferredWidth: 40
+                                Layout.preferredHeight: 40
+                                radius: 8
+                                color: bridge.activeSceneColor
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: window.sceneLetter()
+                                    color: "#0A0A0C"
+                                    font.pixelSize: 18
+                                    font.bold: true
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.preferredWidth: 76
+                                Layout.preferredHeight: 38
+                                radius: 10
+                                color: "#27272A"
+                                border.width: 1
+                                border.color: "#3F3F46"
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "✓"
+                                    color: "#F4F4F5"
+                                    font.pixelSize: 20
+                                    font.bold: true
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: false
+                                    onClicked: window.gigViewVisible = false
+                                }
+                            }
+                        }
+                    }
+
+                    Item {
+                        width: parent.width
+                        height: 416
+
+                        Grid {
+                            visible: window.gigMode === "PRESET"
+                            anchors.centerIn: parent
+                            columns: 4
+                            rows: 2
+                            columnSpacing: 10
+                            rowSpacing: 10
+                            Repeater {
+                                model: 8
+                                delegate: Rectangle {
+                                    width: 190
+                                    height: 185
+                                    radius: 14
+                                    readonly property var presetItem: (bridge.presetsList && index < bridge.presetsList.length) ? bridge.presetsList[index] : null
+                                    readonly property bool activePreset: presetItem && presetItem.id === bridge.activePresetId
+                                    color: activePreset ? "#22C55E" : "#141418"
+                                    border.width: 2
+                                    border.color: activePreset ? "#22C55E" : "#26262E"
+
+                                    Text {
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        anchors.top: parent.top
+                                        anchors.topMargin: 20
+                                        text: "1" + String.fromCharCode(65 + index)
+                                        color: activePreset ? "#0A0A0C" : "#FFFFFF"
+                                        font.pixelSize: 24
+                                        font.bold: true
+                                    }
+                                    Text {
+                                        anchors.centerIn: parent
+                                        anchors.verticalCenterOffset: 20
+                                        text: presetItem ? presetItem.name : "EMPTY"
+                                        color: activePreset ? "#0A0A0C" : "#FFFFFF"
+                                        font.pixelSize: 18
+                                        font.bold: true
+                                        elide: Text.ElideRight
+                                        width: parent.width - 24
+                                        horizontalAlignment: Text.AlignHCenter
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        hoverEnabled: false
+                                        enabled: presetItem !== null
+                                        onClicked: bridge.loadPreset(presetItem.id)
+                                    }
+                                }
+                            }
+                        }
+
+                        Grid {
+                            visible: window.gigMode === "SCENE"
+                            anchors.centerIn: parent
+                            columns: 3
+                            rows: 2
+                            columnSpacing: 10
+                            rowSpacing: 10
+                            Repeater {
+                                model: 6
+                                delegate: Rectangle {
+                                    width: 252
+                                    height: 192
+                                    radius: 14
+                                    readonly property var sceneItem: (bridge.scenes && index < bridge.scenes.length) ? bridge.scenes[index] : null
+                                    readonly property bool activeScene: sceneItem && sceneItem.assigned && sceneItem.index === bridge.selectedSnapshot
+                                    color: sceneItem && sceneItem.assigned ? (activeScene ? sceneItem.color : "#121215") : "#101013"
+                                    border.width: sceneItem && sceneItem.assigned ? 3 : 1
+                                    border.color: sceneItem && sceneItem.assigned ? sceneItem.color : "#222228"
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: String.fromCharCode(65 + index)
+                                        color: sceneItem && sceneItem.assigned ? (activeScene ? "#0A0A0C" : sceneItem.color) : "#1A1A20"
+                                        opacity: activeScene ? 0.25 : 0.18
+                                        font.pixelSize: 96
+                                        font.bold: true
+                                    }
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: sceneItem && sceneItem.assigned ? (sceneItem.name || "Scene " + sceneItem.letter) : "EMPTY"
+                                        color: sceneItem && sceneItem.assigned ? (activeScene ? "#0A0A0C" : "#FFFFFF") : "#52525B"
+                                        font.pixelSize: 20
+                                        font.bold: true
+                                        elide: Text.ElideRight
+                                        width: parent.width - 24
+                                        horizontalAlignment: Text.AlignHCenter
+                                    }
+
+                                    Row {
+                                        x: 10
+                                        y: 8
+                                        spacing: 4
+                                        visible: sceneItem && sceneItem.assigned
+                                        Repeater {
+                                            model: ["✎", "⇄", "⧉"]
+                                            delegate: Rectangle {
+                                                width: 32
+                                                height: 32
+                                                radius: 16
+                                                color: "#27272A"
+                                                border.color: sceneItem ? sceneItem.color : "#26262E"
+                                                border.width: 1
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: modelData
+                                                    color: "#FFFFFF"
+                                                    font.pixelSize: 12
+                                                    font.bold: true
+                                                }
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    hoverEnabled: false
+                                                    onClicked: {
+                                                        if (index === 0) {
+                                                            window.editSceneIndex = sceneItem.index;
+                                                            window.editSceneName = sceneItem.name;
+                                                            window.editSceneColor = sceneItem.color;
+                                                            window.sceneEditVisible = true;
+                                                        } else if (index === 1) {
+                                                            if (window.swapSceneIndex === -1)
+                                                                window.swapSceneIndex = sceneItem.index;
+                                                            else {
+                                                                bridge.swapScenes(window.swapSceneIndex, sceneItem.index);
+                                                                window.swapSceneIndex = -1;
+                                                            }
+                                                        } else {
+                                                            if (window.copySceneIndex === -1)
+                                                                window.copySceneIndex = sceneItem.index;
+                                                            else {
+                                                                bridge.copyScene(window.copySceneIndex, sceneItem.index);
+                                                                window.copySceneIndex = -1;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        anchors.rightMargin: 72
+                                        anchors.bottomMargin: 50
+                                        hoverEnabled: false
+                                        enabled: sceneItem && sceneItem.assigned
+                                        onClicked: bridge.switchScene(sceneItem.index)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                id: sceneEditModal
+                anchors.centerIn: parent
+                width: 360
+                height: 180
+                radius: 12
+                visible: window.sceneEditVisible
+                z: 150
+                color: "#18181C"
+                border.color: "#2E2E34"
+                border.width: 1
+
+                Column {
+                    anchors.fill: parent
+                    anchors.margins: 16
+                    spacing: 12
+                    Text {
+                        text: "EDIT SCENE " + String.fromCharCode(65 + window.editSceneIndex)
+                        color: "#FFFFFF"
+                        font.pixelSize: 16
+                        font.bold: true
+                    }
+                    TextField {
+                        width: parent.width
+                        text: window.editSceneName
+                        color: "#FFFFFF"
+                        onTextChanged: window.editSceneName = text
+                        background: Rectangle {
+                            radius: 6
+                            color: "#0E0E11"
+                            border.color: "#32323A"
+                            border.width: 1
+                        }
+                    }
+                    Row {
+                        spacing: 8
+                        Repeater {
+                            model: ["#22C55E", "#FACC15", "#EF4444", "#F97316", "#00E5FF", "#3B82F6", "#A855F7", "#EC4899"]
+                            delegate: Rectangle {
+                                width: 32
+                                height: 32
+                                radius: 16
+                                color: modelData
+                                border.width: window.editSceneColor === modelData ? 2 : 0
+                                border.color: "#FFFFFF"
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: false
+                                    onClicked: window.editSceneColor = modelData
+                                }
+                            }
+                        }
+                    }
+                    Row {
+                        anchors.right: parent.right
+                        spacing: 8
+                        Rectangle {
+                            width: 76
+                            height: 34
+                            radius: 17
+                            color: "#27272A"
+                            Text {
+                                anchors.centerIn: parent
+                                text: "CANCEL"
+                                color: "#FFFFFF"
+                                font.pixelSize: 9
+                                font.bold: true
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: false
+                                onClicked: window.sceneEditVisible = false
+                            }
+                        }
+                        Rectangle {
+                            width: 76
+                            height: 34
+                            radius: 17
+                            color: "#22C55E"
+                            Text {
+                                anchors.centerIn: parent
+                                text: "APPLY"
+                                color: "#0A0A0C"
+                                font.pixelSize: 9
+                                font.bold: true
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: false
+                                onClicked: {
+                                    bridge.updateScene(window.editSceneIndex, window.editSceneName, window.editSceneColor);
+                                    window.sceneEditVisible = false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                id: pluginBrowserOverlay
+                parent: window.contentItem
+                anchors.fill: parent
+                visible: window.pluginBrowserVisible
+                z: 145
+                color: "#0A0A0C"
+                Row {
+                    anchors.fill: parent
+                    anchors.margins: 16
+                    spacing: 16
+
+                    Column {
+                        width: 190
+                        height: parent.height
+                        spacing: 6
+                        Text {
+                            text: "CATEGORIES"
+                            color: "#8E8E9F"
+                            font.pixelSize: 11
+                            font.bold: true
+                            width: parent.width
+                            height: 24
+                        }
+                        Repeater {
+                            model: ["★ FAVORITES", "ALL", "AMP", "CAB", "DRIVE", "MOD", "DELAY", "REVERB", "EQ / DYN", "SPLITTER"]
+                            delegate: Rectangle {
+                                width: 190
+                                height: 38
+                                radius: 19
+                                color: window.pluginCategory === modelData ? "#25252A" : "#141418"
+                                border.color: window.pluginCategory === modelData ? "#94A3B8" : "#26262E"
+                                border.width: 1
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: modelData
+                                    color: "#FFFFFF"
+                                    font.pixelSize: 10
+                                    font.bold: true
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: false
+                                    onClicked: window.pluginCategory = modelData
+                                }
+                            }
+                        }
+                    }
+
+                    Column {
+                        width: parent.width - 202
+                        height: parent.height
+                        Item {
+                            width: parent.width
+                            height: 52
+                            Text {
+                                anchors.left: parent.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "PLUGIN BROWSER"
+                                color: "#FFFFFF"
+                                font.pixelSize: 18
+                                font.bold: true
+                            }
+                            Rectangle {
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 48
+                                height: 48
+                                radius: 24
+                                color: "#1A1A22"
+                                border.color: "#2C2C36"
+                                border.width: 1
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "✕"
+                                    color: "#FFFFFF"
+                                    font.pixelSize: 18
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: false
+                                    onClicked: {
+                                        window.keyboardOpen = false;
+                                        searchField.focus = false;
+                                        window.pluginBrowserVisible = false;
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            width: parent.width
+                            height: 44
+                            radius: 8
+                            color: "#141418"
+                            border.color: "#2E2E34"
+                            TextInput {
+                                id: searchField
+                                anchors.fill: parent
+                                anchors.leftMargin: 14
+                                anchors.rightMargin: 14
+                                verticalAlignment: TextInput.AlignVCenter
+                                text: window.pluginSearchText
+                                color: "#FFFFFF"
+                                font.pixelSize: 15
+                                onTextChanged: window.pluginSearchText = text
+                                onActiveFocusChanged: {}
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: false
+                                onClicked: {
+                                    searchField.forceActiveFocus();
+                                    window.keyboardOpen = true;
+                                }
+                            }
+                            Text {
+                                anchors.right: parent.right
+                                anchors.rightMargin: 14
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "SEARCH"
+                                color: "#777783"
+                                font.pixelSize: 9
+                                font.bold: true
+                            }
+                        }
+
+                        Rectangle {
+                            width: parent.width
+                            height: 52
+                            radius: 8
+                            color: "#141418"
+                            border.color: "#26262E"
+                            Text {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 14
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "Add Signal Splitter"
+                                color: "#FFFFFF"
+                                font.pixelSize: 15
+                                font.bold: true
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: false
+                                onClicked: {
+                                    bridge.insertPlugin("uri://two-play/pipedal/pedalboard#Split", signalCanvas.insertionChainId !== undefined ? signalCanvas.insertionChainId : "main", window.pluginInsertionIndex);
+                                    window.pluginBrowserVisible = false;
+                                }
+                            }
+                        }
+
+                        ListView {
+                            width: parent.width
+                            height: window.keyboardOpen ? parent.height - 271 : parent.height - 106
+                            clip: true
+                            spacing: 6
+                            model: bridge ? bridge.filteredPluginCatalog(window.pluginCategory, window.pluginSearchText) : []
+                            delegate: Rectangle {
+                                width: ListView.view ? ListView.view.width : 560
+                                height: 52
+                                radius: 8
+                                color: "#141418"
+                                border.color: "#26262E"
+                                Text {
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 14
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: modelData.name || modelData.uri
+                                    color: "#FFFFFF"
+                                    font.pixelSize: 15
+                                    font.bold: true
+                                }
+                                Rectangle {
+                                    width: 44
+                                    height: 44
+                                    radius: 22
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 4
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    color: "transparent"
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: (bridge.favorites && bridge.favorites[modelData.uri]) ? "★" : "☆"
+                                        color: (bridge.favorites && bridge.favorites[modelData.uri]) ? "#FACC15" : "#777783"
+                                        font.pixelSize: 22
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        hoverEnabled: false
+                                        onClicked: bridge.setFavorite(modelData.uri, !(bridge.favorites && bridge.favorites[modelData.uri]))
+                                    }
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: false
+                                    onClicked: {
+                                        bridge.insertPlugin(modelData.uri, signalCanvas.insertionChainId !== undefined ? signalCanvas.insertionChainId : "main", window.pluginInsertionIndex);
+                                        window.pluginBrowserVisible = false;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                id: bankPresetOverlay
+                parent: window.contentItem
+                anchors.fill: parent
+                visible: window.bankPresetOverlayVisible
+                z: 140
+                color: "#0A0A0C"
+
+                Column {
+                    anchors.fill: parent
+
+                    // ── Dedicated 56px header ──────────────────────────────────
+                    Rectangle {
+                        width: parent.width
+                        height: 56
+                        color: "#0D0D10"
+                        border.color: "#1E1E24"
+                        border.width: 1
+
+                        Text {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 24
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "BANKS"
+                            color: "#8E8E9F"
+                            font.pixelSize: 13
+                            font.bold: true
+                        }
+
+                        Text {
+                            anchors.left: parent.right
+                            anchors.leftMargin: -260
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "PRESETS"
+                            color: "#FFFFFF"
+                            font.pixelSize: 16
+                            font.bold: true
+                        }
+
+                        Rectangle {
+                            width: 48
+                            height: 48
+                            radius: 24
+                            anchors.right: parent.right
+                            anchors.rightMargin: 16
+                            anchors.verticalCenter: parent.verticalCenter
+                            color: "#1A1A22"
+                            border.color: "#2E2E34"
+                            border.width: 1
+                            Text {
+                                anchors.centerIn: parent
+                                text: "✕"
+                                color: "#FFFFFF"
+                                font.pixelSize: 18
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: false
+                                onClicked: window.bankPresetOverlayVisible = false
+                            }
+                        }
+                    }
+
+                    // ── Two-column body ───────────────────────────────────────
+                    Row {
+                        width: parent.width
+                        height: parent.height - 56
+                        spacing: 1
+
+                        Rectangle {
+                            width: 260
+                            height: parent.height
+                            color: "#101014"
+                            ListView {
+                                anchors.fill: parent
+                                anchors.margins: 12
+                                spacing: 8
+                                clip: true
+                                model: bridge ? (bridge.bankIndex.banks || []) : []
+                                header: Text {
+                                    text: ""
+                                    height: 0
+                                }
+                                delegate: Rectangle {
+                                    width: 236
+                                    height: 54
+                                    radius: 8
+                                    readonly property bool selectedBank: modelData.instanceId === bridge.bankIndex.selectedBank
+                                    color: selectedBank ? "#1C1C22" : "#141418"
+                                    border.color: selectedBank ? bridge.activeSceneColor : "#26262E"
+                                    Text {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.left: parent.left
+                                        anchors.leftMargin: 14
+                                        text: modelData.name || "Bank"
+                                        color: "#FFFFFF"
+                                        font.pixelSize: 15
+                                        font.bold: true
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        hoverEnabled: false
+                                        onClicked: {
+                                            bridge.openBank(modelData.instanceId);
+                                            bridge.requestBankPresets(modelData.instanceId);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            width: parent.width - 261
+                            height: parent.height
+                            color: "#0A0A0C"
+                            ListView {
+                                anchors.fill: parent
+                                anchors.margins: 12
+                                spacing: 8
+                                clip: true
+                                model: bridge ? ((bridge.bankPresets && bridge.bankPresets.length) ? bridge.bankPresets : bridge.presetsList) : []
+                                delegate: Rectangle {
+                                    width: parent.width
+                                    height: 54
+                                    radius: 8
+                                    color: modelData.selected ? "#1C1C22" : "#141418"
+                                    border.color: modelData.selected ? bridge.activeSceneColor : "#26262E"
+                                    Text {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.left: parent.left
+                                        anchors.leftMargin: 16
+                                        text: modelData.name || "Preset"
+                                        color: "#FFFFFF"
+                                        font.pixelSize: 15
+                                        font.bold: true
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        hoverEnabled: false
+                                        onClicked: {
+                                            bridge.loadPreset(modelData.instanceId !== undefined ? modelData.instanceId : modelData.id);
+                                            window.bankPresetOverlayVisible = false;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                id: qwertyKeyboard
+                visible: window.pluginBrowserVisible && window.keyboardOpen
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 215
+                z: 200
+                color: "#151518"
+                border.color: "#2E2E34"
+                border.width: 1
+                Column {
+                    anchors.fill: parent
+                    anchors.margins: 8
+                    spacing: 6
+                    Repeater {
+                        model: ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"]
+                        delegate: Row {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            spacing: 5
+                            Repeater {
+                                model: modelData
+                                delegate: Rectangle {
+                                    width: 68
+                                    height: 44
+                                    radius: 8
+                                    color: "#27272A"
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: modelData
+                                        color: "#FFFFFF"
+                                        font.pixelSize: 16
+                                        font.bold: true
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        hoverEnabled: false
+                                        onClicked: window.pluginSearchText += modelData
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Row {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        spacing: 8
+                        Repeater {
+                            model: [
+                                {
+                                    text: "CLEAR",
+                                    width: 92
+                                },
+                                {
+                                    text: "SPACE",
+                                    width: 180
+                                },
+                                {
+                                    text: "⌫",
+                                    width: 92
+                                },
+                                {
+                                    text: "DONE",
+                                    width: 92
+                                }
+                            ]
+                            delegate: Rectangle {
+                                width: modelData.width
+                                height: 44
+                                radius: 8
+                                color: modelData.text === "DONE" ? "#22C55E" : "#27272A"
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: modelData.text
+                                    color: modelData.text === "DONE" ? "#0A0A0C" : "#FFFFFF"
+                                    font.pixelSize: 10
+                                    font.bold: true
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: false
+                                    onClicked: {
+                                        if (modelData.text === "CLEAR")
+                                            window.pluginSearchText = "";
+                                        else if (modelData.text === "SPACE")
+                                            window.pluginSearchText += " ";
+                                        else if (modelData.text === "⌫")
+                                            window.pluginSearchText = window.pluginSearchText.substring(0, window.pluginSearchText.length - 1);
+                                        else {
+                                            window.keyboardOpen = false;
+                                            searchField.focus = false;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                id: presetOverlay
+                anchors.fill: parent
+                visible: window.presetOverlayVisible
+                z: 120
+                color: "#0A0A0C"
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 16
+                    spacing: 12
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 48
+                        Text {
+                            text: "SELECT PRESET"
+                            color: "#FFFFFF"
+                            font.pixelSize: 18
+                            font.bold: true
+                        }
+                        Item {
+                            Layout.fillWidth: true
+                        }
+                        Item {
+                            Layout.preferredWidth: 48
+                            Layout.preferredHeight: 48
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: 24
+                                color: "#1A1A22"
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "✕"
+                                    color: "#FFFFFF"
+                                }
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: false
+                                onClicked: window.presetOverlayVisible = false
+                            }
+                        }
+                    }
+                    ListView {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        clip: true
+                        model: bridge ? bridge.presetsList : []
+                        spacing: 8
+                        delegate: Item {
+                            width: parent.width
+                            height: 54
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: 8
+                                color: modelData.selected ? "#1C1C26" : "#141418"
+                                border.color: modelData.selected ? "#10B981" : "#26262E"
+                                border.width: modelData.selected ? 2 : 1
+                            }
+                            Text {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 16
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: modelData.name
+                                color: "#FFFFFF"
+                                font.pixelSize: 15
+                                font.bold: modelData.selected
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: false
+                                onClicked: {
+                                    bridge.loadPreset(modelData.id);
+                                    window.presetOverlayVisible = false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Device & System Modal (z:50, two-tap confirm) ─────────────────
+            Rectangle {
+                id: settingsModal
+                anchors.fill: parent
+                visible: window.settingsModalVisible
+                z: 50
+                color: "#00000099"
+
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 420
+                    height: 300
+                    radius: 16
+                    color: "#111115"
+                    border.color: "#2E2E34"
+                    border.width: 1
+
+                    Column {
+                        anchors.fill: parent
+                        anchors.margins: 20
+                        spacing: 16
+
+                        // Header with top-right menu button trigger and close button
+                        RowLayout {
+                            width: parent.width
+                            spacing: 12
+
+                            Text {
+                                text: "DEVICE & SYSTEM"
+                                color: "#FFFFFF"
+                                font.pixelSize: 16
+                                font.bold: true
+                                Layout.fillWidth: true
+                            }
+
+                            // Settings menu button (top-right)
+                            Rectangle {
+                                width: 36
+                                height: 36
+                                radius: 18
+                                color: "#1E1E24"
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "⚙"
+                                    color: "#FFFFFF"
+                                    font.pixelSize: 16
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: false
+                                    onClicked: window.settingsModalVisible = true
+                                }
+                            }
+
+                            // Close button
+                            Rectangle {
+                                width: 36
+                                height: 36
+                                radius: 18
+                                color: "#1E1E24"
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "✕"
+                                    color: "#FFFFFF"
+                                    font.pixelSize: 16
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: false
+                                    onClicked: {
+                                        window.settingsModalVisible = false;
+                                        window.settingsConfirmState = 0;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Server info
+                        Rectangle {
+                            width: parent.width
+                            height: 54
+                            radius: 8
+                            color: "#0E0E12"
+                            border.color: "#1E1E28"
+                            border.width: 1
+                            Column {
+                                anchors.centerIn: parent
+                                spacing: 4
+                                Text {
+                                    text: "HOST  " + (bridge ? bridge.hostAddress : "—")
+                                    color: "#8E8E9F"
+                                    font.pixelSize: 11
+                                    horizontalAlignment: Text.AlignHCenter
+                                }
+                                Text {
+                                    text: "SERVER  " + (bridge ? bridge.serverVersion : "—")
+                                    color: "#8E8E9F"
+                                    font.pixelSize: 11
+                                    horizontalAlignment: Text.AlignHCenter
+                                }
+                            }
+                        }
+
+                        // Action buttons
+                        Row {
+                            width: parent.width
+                            spacing: 12
+
+                            // REBOOT PI
+                            Rectangle {
+                                width: (parent.width - 12) / 2
+                                height: 72
+                                radius: 12
+                                color: window.settingsConfirmState === 1 ? "#92400E" : "#1C1C20"
+                                border.color: window.settingsConfirmState === 1 ? "#F59E0B" : "#3F3F46"
+                                border.width: 2
+
+                                Column {
+                                    anchors.centerIn: parent
+                                    spacing: 4
+                                    Text {
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        text: window.settingsConfirmState === 1 ? "TAP AGAIN TO\nCONFIRM REBOOT" : "REBOOT PI"
+                                        color: window.settingsConfirmState === 1 ? "#F59E0B" : "#FFFFFF"
+                                        font.pixelSize: window.settingsConfirmState === 1 ? 10 : 14
+                                        font.bold: true
+                                        horizontalAlignment: Text.AlignHCenter
+                                    }
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: false
+                                    onClicked: {
+                                        if (window.settingsConfirmState === 1) {
+                                            bridge.rebootPi();
+                                            window.settingsModalVisible = false;
+                                            window.settingsConfirmState = 0;
+                                        } else {
+                                            window.settingsConfirmState = 1;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // SHUTDOWN PI
+                            Rectangle {
+                                width: (parent.width - 12) / 2
+                                height: 72
+                                radius: 12
+                                color: window.settingsConfirmState === 2 ? "#7F1D1D" : "#1C1C20"
+                                border.color: window.settingsConfirmState === 2 ? "#EF4444" : "#3F3F46"
+                                border.width: 2
+
+                                Column {
+                                    anchors.centerIn: parent
+                                    spacing: 4
+                                    Text {
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        text: window.settingsConfirmState === 2 ? "TAP AGAIN TO\nCONFIRM SHUTDOWN" : "SHUTDOWN PI"
+                                        color: window.settingsConfirmState === 2 ? "#EF4444" : "#FFFFFF"
+                                        font.pixelSize: window.settingsConfirmState === 2 ? 10 : 14
+                                        font.bold: true
+                                        horizontalAlignment: Text.AlignHCenter
+                                    }
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: false
+                                    onClicked: {
+                                        if (window.settingsConfirmState === 2) {
+                                            bridge.shutdownPi();
+                                            window.settingsModalVisible = false;
+                                            window.settingsConfirmState = 0;
+                                        } else {
+                                            window.settingsConfirmState = 2;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Tap backdrop to cancel
+                MouseArea {
+                    anchors.fill: parent
+                    z: -1
+                    hoverEnabled: false
+                    onClicked: {
+                        window.settingsModalVisible = false;
+                        window.settingsConfirmState = 0;
+                    }
+                }
+            }
+        }
+        Connections {
+            target: bridge
+            function onSelectedPedalIndexChanged() {
+                window.editorParamPage = 0;
+            }
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

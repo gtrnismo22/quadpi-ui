@@ -577,10 +577,10 @@ class PiPedalBridge(QObject):
         if self._async_client:
             self._async_client.move_block(instance_id, direction)
 
-    @Slot(int, int, int)
-    def dropBlock(self, instance_id: int, target_chain_id: int, target_index: int):
+    @Slot(int, str, int)
+    def dropBlock(self, instance_id: int, target_chain_id: str, target_index: int):
         if self._async_client:
-            self._async_client.drop_block(instance_id, target_chain_id, target_index)
+            self._async_client.drop_block(int(instance_id), str(target_chain_id), int(target_index))
 
     @Slot(str, bool)
     def setFavorite(self, plugin_uri: str, is_favorite: bool):
@@ -608,21 +608,46 @@ class PiPedalBridge(QObject):
     @Slot(int)
     def toggleBypass(self, instance_id: int):
         """Toggle the bypass state of an effect block on the Pi."""
+        inst_id = int(instance_id)
         target_item = None
         for block in self._effect_blocks:
-            if block["instanceId"] == instance_id:
+            if int(block.get("instanceId", -1)) == inst_id:
                 target_item = block
                 break
-
         if target_item:
-            new_enabled = not target_item["enabled"]
+            new_enabled = not bool(target_item.get("enabled", True))
             target_item["enabled"] = new_enabled
             target_item["bypassed"] = not new_enabled
+            target_item["active"] = new_enabled
+            if self._async_client and isinstance(self._async_client.raw_pedalboard, dict):
+                def _set_pb_enabled(lst):
+                    for it in lst:
+                        if not isinstance(it, dict):
+                            continue
+                        if int(it.get("instanceId", -1)) == inst_id:
+                            it["isEnabled"] = new_enabled
+                            return True
+                        if _set_pb_enabled(it.get("topChain", []) or []) or _set_pb_enabled(it.get("bottomChain", []) or []):
+                            return True
+                    return False
+                _set_pb_enabled(self._async_client.raw_pedalboard.get("items", []) or [])
             self.effectBlocksChanged.emit()
+            if hasattr(self, '_signal_nodes') and isinstance(self._signal_nodes, list):
+                new_nodes = []
+                for nd in self._signal_nodes:
+                    if isinstance(nd, dict) and int(nd.get("instanceId", -1)) == inst_id:
+                        nd_copy = dict(nd)
+                        nd_copy["bypassed"] = not new_enabled
+                        nd_copy["enabled"] = new_enabled
+                        new_nodes.append(nd_copy)
+                    else:
+                        new_nodes.append(nd)
+                self._signal_nodes = new_nodes
+                if hasattr(self, 'signalTreeChanged'):
+                    self.signalTreeChanged.emit()
             self.selectedPedalChanged.emit()
-
             if self._async_client:
-                self._async_client.send_set_item_enabled(instance_id, new_enabled)
+                self._async_client.send_set_item_enabled(inst_id, new_enabled)
 
     @Slot(int, str, float)
     def setParameter(self, instance_id: int, symbol: str, value: float):
@@ -692,6 +717,19 @@ class PiPedalBridge(QObject):
                 block["bypassed"] = not enabled
                 break
         self.effectBlocksChanged.emit()
+        if hasattr(self, '_signal_nodes') and isinstance(self._signal_nodes, list):
+            new_nodes = []
+            for nd in self._signal_nodes:
+                if isinstance(nd, dict) and int(nd.get("instanceId", -1)) == int(instance_id):
+                    nd_copy = dict(nd)
+                    nd_copy["bypassed"] = not bool(enabled)
+                    nd_copy["enabled"] = bool(enabled)
+                    new_nodes.append(nd_copy)
+                else:
+                    new_nodes.append(nd)
+            self._signal_nodes = new_nodes
+            if hasattr(self, 'signalTreeChanged'):
+                self.signalTreeChanged.emit()
         self.selectedPedalChanged.emit()
 
     def _handle_preset_changed_flag(self, changed: bool):
@@ -1272,6 +1310,19 @@ class PiPedalAsyncClient:
         print(f"[PiPedal] Loaded {len(bridge_effects)} live effect blocks onto pedalboard")
 
     def _build_recursive_signal_tree(self, items: List[Dict[str, Any]], effect_by_id: Dict[int, Dict[str, Any]]):
+        def _exact_extent(chain_list):
+            if not chain_list:
+                return (34.0, 34.0)
+            max_a, max_b = 34.0, 34.0
+            for sub in chain_list:
+                if isinstance(sub, dict) and sub.get("uri") == SPLIT_URI:
+                    ta, tb = _exact_extent(sub.get("topChain", []) or [])
+                    ba, bb = _exact_extent(sub.get("bottomChain", []) or [])
+                    to = tb + 14.0
+                    bo = ba + 14.0
+                    max_a = max(max_a, to + ta)
+                    max_b = max(max_b, bo + bb)
+            return (max_a, max_b)
         """Lay out the pedalboard signal tree as a pure recursive chain of nodes/wires.
 
         Geometry is produced exactly once here; QML only paints the resulting
@@ -1515,25 +1566,20 @@ class PiPedalAsyncClient:
                     # Extract chain items before measuring (fix: define top_items/bottom_items before use)
                     top_items = item.get("topChain", []) or []
                     bottom_items = item.get("bottomChain", []) or []
-                    
-                    # Measure nested split branches dynamically for both chains
-                    top_t, top_b = measure_chain(top_items)
-                    bot_t, bot_b = measure_chain(bottom_items)
-                    
-                    # Calculate offsets for each branch
-                    top_offset = top_b + INNER_GAP / 2.0
-                    bot_offset = bot_t + INNER_GAP / 2.0
-                    
-                    # Place split branches at correct vertical positions
+                    top_t, top_b = _exact_extent(top_items)
+                    bot_t, bot_b = _exact_extent(bottom_items)
+                    top_offset = top_b + 14.0
+                    bot_offset = bot_t + 14.0
                     top_y = center_y - top_offset
                     bot_y = center_y + bot_offset
-                    
+
                     top_active = bool(active) and branch_active(cv_map, True)
                     bot_active = bool(active) and branch_active(cv_map, False)
 
-                    top_end_x = layout_chain(top_items, branch_start_x, top_y, top_active, inst_id)
-                    bot_end_x = layout_chain(bottom_items, branch_start_x, bot_y, bot_active, inst_id)
+                    top_end_x = layout_chain(top_items, branch_start_x, top_y, top_active, f"split:{inst_id}:top")
+                    bot_end_x = layout_chain(bottom_items, branch_start_x, bot_y, bot_active, f"split:{inst_id}:bottom")
                     rejoin_x = max(top_end_x, bot_end_x) + BRANCH_PAD
+                    rejoin_out_x = rejoin_x + FORK_LEAD
 
                     wires.append({
                         "name": "top-branch-fork",
@@ -1551,6 +1597,7 @@ class PiPedalAsyncClient:
                             {"x": top_end_x, "y": top_y},
                             {"x": rejoin_x, "y": top_y},
                             {"x": rejoin_x, "y": center_y},
+                            {"x": rejoin_out_x, "y": center_y},
                         ],
                         "active": top_active,
                     })
@@ -1570,16 +1617,15 @@ class PiPedalAsyncClient:
                             {"x": bot_end_x, "y": bot_y},
                             {"x": rejoin_x, "y": bot_y},
                             {"x": rejoin_x, "y": center_y},
+                            {"x": rejoin_out_x, "y": center_y},
                         ],
                         "active": bot_active,
                     })
 
-                    # Trailing open-wire gaps at the end of each split branch.
-                    add_slot(top_end_x, rejoin_x, top_y, inst_id, count_effects(top_items))
-                    add_slot(bot_end_x, rejoin_x, bot_y, inst_id, count_effects(bottom_items))
+                    add_slot(top_end_x, rejoin_x, top_y, f"split:{inst_id}:top", count_effects(top_items))
+                    add_slot(bot_end_x, rejoin_x, bot_y, f"split:{inst_id}:bottom", count_effects(bottom_items))
 
-                    effect_index += count_effects(top_items) + count_effects(bottom_items)
-                    prev_x = rejoin_x
+                    prev_x = rejoin_out_x
                     # CRITICAL: no horizontal wire at center_y between split_x and rejoin_x.
                     continue
 
@@ -1588,7 +1634,8 @@ class PiPedalAsyncClient:
                     continue
 
                 x = prev_x + H_GAP
-                node_active = bool(active) and bool(block.get("enabled", True))
+                # Wire should be active if the chain/branch is active, regardless of individual block bypassed state
+                node_active = bool(active)
                 wires.append({
                     "name": "chain",
                     "points": [{"x": prev_x, "y": center_y}, {"x": x, "y": center_y}],
@@ -1612,6 +1659,8 @@ class PiPedalAsyncClient:
                 prev_x = x + BLOCK_W
                 effect_index += 1
 
+            if str(chain_id) in ("main", "0", "") and effect_index > 0:
+                add_slot(prev_x, prev_x + H_GAP, center_y, "main", effect_index)
             return prev_x
 
         # ---- Build the tree ---------------------------------------------------
@@ -1973,43 +2022,105 @@ class PiPedalAsyncClient:
         body = {"clientId": self.client_id, "pedalboard": pedalboard}
         self._schedule_coro(self._send_notification("updateCurrentPedalboard", body))
 
-    def drop_block(self, instance_id: int, target_chain_id: int, target_index: int):
-        """Drop a block onto a wire gap.
-        
-        The target_chain_id can be:
-        - A negative number for the main chain
-        - "split:<id>:top" or "split:<id>:bottom" for split branches
-        
-        The target_index is a flat index into the resolved chain items.
-        """
+    def delete_block(self, instance_id: int):
+        if not self.raw_pedalboard:
+            return
         pedalboard = json.loads(json.dumps(self.raw_pedalboard))
         items = pedalboard.get("items", [])
-        moving = self._find_and_remove_item(items, int(instance_id))
+        target_id = int(instance_id)
+        def _pop_item(lst):
+            for i, it in enumerate(lst):
+                if not isinstance(it, dict):
+                    continue
+                if int(it.get("instanceId", -1)) == target_id:
+                    return lst.pop(i)
+                if it.get("uri") == SPLIT_URI:
+                    got = _pop_item(it.get("topChain", []) or []) or _pop_item(it.get("bottomChain", []) or [])
+                    if got is not None:
+                        return got
+            return None
+        if _pop_item(items) is not None:
+            body = {"clientId": self.client_id, "pedalboard": pedalboard}
+            self._schedule_coro(self._send_notification("updateCurrentPedalboard", body))
+
+    def drop_block(self, instance_id: int, target_chain_id: str, target_index: int):
+        if not self.raw_pedalboard:
+            return
+        pedalboard = json.loads(json.dumps(self.raw_pedalboard))
+        items = pedalboard.get("items", [])
+        inst_id = int(instance_id)
+        chain_str = str(target_chain_id or "main")
+        def _find_item(lst, target_id):
+            for it in lst:
+                if not isinstance(it, dict):
+                    continue
+                if int(it.get("instanceId", -1)) == target_id:
+                    return it
+                if it.get("uri") == SPLIT_URI:
+                    found = _find_item(it.get("topChain", []) or [], target_id) or _find_item(it.get("bottomChain", []) or [], target_id)
+                    if found is not None:
+                        return found
+            return None
+        def _contains_split(node, split_id):
+            if not isinstance(node, dict) or node.get("uri") != SPLIT_URI:
+                return False
+            if int(node.get("instanceId", -1)) == split_id:
+                return True
+            return any(_contains_split(c, split_id) for c in (node.get("topChain", []) or []) + (node.get("bottomChain", []) or []))
+        moving_item = _find_item(items, inst_id)
+        if moving_item is None:
+            return
+        if chain_str.startswith("split:"):
+            parts = chain_str.split(":")
+            if len(parts) == 3 and parts[1].isdigit() and _contains_split(moving_item, int(parts[1])):
+                return
+        def _find_chain(lst, cid):
+            if cid in ("main", "0", ""):
+                return lst
+            for it in lst:
+                if not isinstance(it, dict):
+                    continue
+                iid = it.get("instanceId")
+                if cid == f"split:{iid}:top":
+                    return it.setdefault("topChain", [])
+                if cid == f"split:{iid}:bottom":
+                    return it.setdefault("bottomChain", [])
+                if it.get("uri") == SPLIT_URI:
+                    found = _find_chain(it.get("topChain", []) or [], cid)
+                    if found is not None:
+                        return found
+                    found = _find_chain(it.get("bottomChain", []) or [], cid)
+                    if found is not None:
+                        return found
+            return None
+        target_chain = _find_chain(items, chain_str)
+        if target_chain is None:
+            return
+        idx = int(target_index)
+        src_idx = next((i for i, x in enumerate(target_chain) if isinstance(x, dict) and int(x.get("instanceId", -1)) == inst_id), -1)
+        def _pop_item(lst, target_id):
+            for i, it in enumerate(lst):
+                if not isinstance(it, dict):
+                    continue
+                if int(it.get("instanceId", -1)) == target_id:
+                    return lst.pop(i)
+                if it.get("uri") == SPLIT_URI:
+                    got = _pop_item(it.get("topChain", []) or [], target_id)
+                    if got is not None:
+                        return got
+                    got = _pop_item(it.get("bottomChain", []) or [], target_id)
+                    if got is not None:
+                        return got
+            return None
+        moving = _pop_item(items, inst_id)
         if moving is None:
             return
-
-        # Resolve the target chain items using _resolve_chain_items
-        resolved_chain = self._resolve_chain_items(items, target_chain_id)
-        
-        def insert_at_flat_index(chain_items: List[Dict[str, Any]], flat_index: int) -> bool:
-            flat_items = self._flatten_pedalboard_items(chain_items)
-            if flat_index <= 0:
-                if chain_items:
-                    chain_items.insert(0, moving)
-                    return True
-            if flat_index < len(flat_items):
-                target_id = int(flat_items[flat_index].get("instanceId", -1))
-                if self._insert_item_before(chain_items, target_id, moving):
-                    return True
-            chain_items.append(moving)
-            return True
-
-        # Insert at the resolved chain with the given flat index
-        insert_at_flat_index(resolved_chain, max(0, int(target_index)))
-
+        if src_idx != -1 and src_idx < idx:
+            idx -= 1
+        idx = max(0, min(idx, len(target_chain)))
+        target_chain.insert(idx, moving)
         body = {"clientId": self.client_id, "pedalboard": pedalboard}
         self._schedule_coro(self._send_notification("updateCurrentPedalboard", body))
-
     def _schedule_coro(self, coro):
         """Safely schedule an async coroutine on the background event loop."""
         if self.loop and self.loop.is_running():
