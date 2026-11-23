@@ -174,6 +174,7 @@ class PiPedalBridge(QObject):
     _sig_control_value_changed = Signal(int, str, float)
     _sig_item_enabled_changed = Signal(int, bool)
     _sig_preset_changed_flag = Signal(bool)
+    _sig_snapshot_selected = Signal(int)
     _sig_file_list_updated = Signal(int, str, "QVariantList")
     _sig_path_property_changed = Signal(int, str, str)
 
@@ -227,6 +228,7 @@ class PiPedalBridge(QObject):
         self._sig_control_value_changed.connect(self._handle_control_value_changed, Qt.QueuedConnection)
         self._sig_item_enabled_changed.connect(self._handle_item_enabled_changed, Qt.QueuedConnection)
         self._sig_preset_changed_flag.connect(self._handle_preset_changed_flag, Qt.QueuedConnection)
+        self._sig_snapshot_selected.connect(self._handle_snapshot_selected, Qt.QueuedConnection)
         self._sig_file_list_updated.connect(self._handle_file_list_updated, Qt.QueuedConnection)
         self._sig_path_property_changed.connect(self._handle_path_property_changed, Qt.QueuedConnection)
 
@@ -732,6 +734,11 @@ class PiPedalBridge(QObject):
                 self.signalTreeChanged.emit()
         self.selectedPedalChanged.emit()
 
+    def _handle_snapshot_selected(self, snapshot_index: int):
+        self._selected_snapshot = int(snapshot_index)
+        self._refresh_scenes()
+        self.snapshotsChanged.emit()
+
     def _handle_preset_changed_flag(self, changed: bool):
         self._preset_changed = changed
         self.presetChangedStatusChanged.emit(changed)
@@ -883,9 +890,9 @@ class PiPedalAsyncClient:
                 if isinstance(raw_msg, bytes):
                     raw_msg = raw_msg.decode("utf-8", errors="replace")
 
-                # Print raw [WS RX] JSON log (truncated to 300 chars)
-                rx_preview = raw_msg[:300] + ("..." if len(raw_msg) > 300 else "")
-                print(f"[WS RX] {rx_preview}")
+                if not sys.platform.startswith("linux"):
+                    rx_preview = raw_msg[:300] + ("..." if len(raw_msg) > 300 else "")
+                    print(f"[WS RX] {rx_preview}")
 
                 await self._handle_raw_message(raw_msg)
         except Exception as e:
@@ -917,8 +924,9 @@ class PiPedalAsyncClient:
             if reply_to is not None and reply_to != -1:
                 reply_msg = [{"reply": reply_to, "message": header.get("message", "")}, True]
                 reply_json = json.dumps(reply_msg)
-                tx_preview = reply_json[:300] + ("..." if len(reply_json) > 300 else "")
-                print(f"[WS TX REPLY] {tx_preview}")
+                if not sys.platform.startswith("linux"):
+                    tx_preview = reply_json[:300] + ("..." if len(reply_json) > 300 else "")
+                    print(f"[WS TX REPLY] {tx_preview}")
                 if self.ws:
                     await self.ws.send(reply_json)
 
@@ -966,9 +974,7 @@ class PiPedalAsyncClient:
 
             elif message_type == "onSelectedSnapshotChanged":
                 if body is not None:
-                    self.bridge._selected_snapshot = int(body)
-                    self.bridge._refresh_scenes()
-                    self.bridge.snapshotsChanged.emit()
+                    self.bridge._sig_snapshot_selected.emit(int(body))
 
             elif message_type == "onNotifyPathPatchPropertyChanged":
                 inst_id = body.get("instanceId") if isinstance(body, dict) else None
@@ -2137,7 +2143,8 @@ class PiPedalAsyncClient:
 
         raw_json = json.dumps(msg)
         tx_preview = raw_json[:300] + ("..." if len(raw_json) > 300 else "")
-        print(f"[WS TX] {tx_preview}")
+        if not sys.platform.startswith("linux"):
+            print(f"[WS TX] {tx_preview}")
 
         try:
             await self.ws.send(raw_json)
@@ -2217,7 +2224,8 @@ class PiPedalAsyncClient:
 
         raw_json = json.dumps(msg)
         tx_preview = raw_json[:300] + ("..." if len(raw_json) > 300 else "")
-        print(f"[WS TX] {tx_preview}")
+        if not sys.platform.startswith("linux"):
+            print(f"[WS TX] {tx_preview}")
 
         future = self.loop.create_future()
         self.pending_requests[code] = future
